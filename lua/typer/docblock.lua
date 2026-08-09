@@ -56,6 +56,7 @@ function M.build(chunk)
                 ---@type typer.DocBlock
                 local block = {
                     comments = { comment },
+                    tags = {},
                     l = comment.l,
                     el = comment.l,
                     trailing = true,
@@ -72,6 +73,7 @@ function M.build(chunk)
                 else
                     current = {
                         comments = { comment },
+                        tags = {},
                         l = comment.l,
                         el = comment.l,
                         trailing = false,
@@ -111,27 +113,6 @@ function M.build(chunk)
     }
 end
 
---- The doc block attached to a node, if any. Marks it consumed so unattached
---- blocks can still be scanned for ambient type declarations.
----@param index typer.DocIndex
----@param node typer.Node
----@return typer.DocBlock|nil
-function M.attached(index, node)
-    local block = index.by_end[node.l - 1]
-    if block then
-        block.consumed = true
-        return block
-    end
-
-    local trailing = index.trailing_by_line[node.el or node.l]
-    if trailing then
-        trailing.consumed = true
-        return trailing
-    end
-
-    return nil
-end
-
 --- Merges a leading block and a trailing block on the same statement.
 ---@param index typer.DocIndex
 ---@param node typer.Node
@@ -157,19 +138,6 @@ function M.tags_for(index, node)
     end
 
     return out
-end
-
---- Finds the first tag of a given kind.
----@param tags typer.Tag[]
----@param kind string
----@return typer.Tag|nil
-function M.find(tags, kind)
-    for _, tag in ipairs(tags) do
-        if tag.kind == kind then
-            return tag
-        end
-    end
-    return nil
 end
 
 --- Collects every tag of a given kind, in source order.

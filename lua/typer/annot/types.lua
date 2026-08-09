@@ -45,15 +45,33 @@ M.VAGUE = {
     ["unknown"] = "disallowed-unknown",
 }
 
---- Generic containers that are complete once their arguments are.
----@type table<string, integer>
-M.BUILTIN_GENERIC = { ["table"] = 2 }
-
+--- A parsed type expression. Like typer.Node this is a union keyed by `k`, and
+--- the payload below is declared on the one class: every reader switches on `k`
+--- first, so the field it then reads is the one its branch guarantees.
 ---@class typer.TypeNode
 ---@field k "name"|"array"|"optional"|"union"|"fun"|"shape"|"literal"|"paren"|"tuple"
 ---@field l integer    -- absolute source line
 ---@field c integer    -- absolute source column
 ---@field ec integer   -- absolute end column, exclusive
+--- name: the identifier, plus its generic arguments and the span of the name
+--- itself (`table<K, V>` points diagnostics at `table`, not the whole thing).
+---@field name string
+---@field args typer.TypeNode[]|nil
+---@field name_ec integer
+--- array, optional, paren: the type being wrapped.
+---@field of typer.TypeNode
+--- union.
+---@field parts typer.TypeNode[]
+--- tuple.
+---@field items typer.TypeNode[]
+--- fun.
+---@field params typer.FunParam[]
+---@field returns typer.TypeNode[]
+--- shape.
+---@field fields typer.ShapeField[]
+--- literal.
+---@field value string|number
+---@field literal_type "string"|"number"
 
 --- One parameter of a `fun(...)` type.
 ---@class typer.FunParam
@@ -196,6 +214,9 @@ local function parse_fun(scanner, start_offset)
                     -- The "name" was actually an unnamed type: `fun(string)`.
                     params[#params + 1] = {
                         name = nil,
+                        -- A `k`-tagged union: this kind carries the fields below
+                        -- and none of the others.
+                        ---@diagnostic disable-next-line: missing-fields
                         type = {
                             k = "name",
                             name = name,
@@ -419,6 +440,9 @@ local function parse_suffixed(scanner)
         if match(scanner.text, "^%s*%[%s*%]", scanner.pos) then
             try_consume(scanner, "[")
             try_consume(scanner, "]")
+            -- A `k`-tagged union: this kind carries the fields below and none of
+            -- the others.
+            ---@diagnostic disable-next-line: missing-fields
             node = {
                 k = "array",
                 of = node,
@@ -428,6 +452,7 @@ local function parse_suffixed(scanner)
             }
         elseif match(scanner.text, "^%s*%?", scanner.pos) then
             try_consume(scanner, "?")
+            ---@diagnostic disable-next-line: missing-fields
             node = {
                 k = "optional",
                 of = node,
@@ -482,90 +507,19 @@ function M.parse(text, offset, line, base_col)
 
     local ok, result = pcall(parse_type, scanner)
     if not ok then
-        if type(result) == "table" and result.typer_error then
-            return nil, scanner.pos, result
+        -- pcall hands back whatever was raised: one of our own error tables, or
+        -- a string from a genuine runtime fault. LuaLS types `result` as the
+        -- success value regardless of `ok`, so the failure type is stated here.
+        ---@type typer.LexError|string
+        ---@diagnostic disable-next-line: assign-type-mismatch
+        local raised = result
+        if type(raised) == "table" and raised.typer_error then
+            return nil, scanner.pos, raised
         end
-        error(result, 0)
+        error(raised, 0)
     end
 
     return result, scanner.pos, nil
-end
-
---- Renders a type node back to source form, for diagnostic messages.
----@param node typer.TypeNode|nil
----@return string
-function M.render(node)
-    if not node then
-        return "<?>"
-    end
-    local kind = node.k
-
-    if kind == "name" then
-        if node.args then
-            ---@type string[]
-            local rendered = {}
-            for i, arg in ipairs(node.args) do
-                rendered[i] = M.render(arg)
-            end
-            return node.name .. "<" .. table.concat(rendered, ", ") .. ">"
-        end
-        return node.name
-    elseif kind == "array" then
-        return M.render(node.of) .. "[]"
-    elseif kind == "optional" then
-        return M.render(node.of) .. "?"
-    elseif kind == "paren" then
-        return "(" .. M.render(node.of) .. ")"
-    elseif kind == "union" then
-        ---@type string[]
-        local rendered = {}
-        for i, part in ipairs(node.parts) do
-            rendered[i] = M.render(part)
-        end
-        return table.concat(rendered, "|")
-    elseif kind == "literal" then
-        if node.literal_type == "string" then
-            return '"' .. node.value .. '"'
-        end
-        return tostring(node.value)
-    elseif kind == "fun" then
-        ---@type string[]
-        local params = {}
-        for i, param in ipairs(node.params) do
-            params[i] = (param.name and (param.name .. (param.optional and "?" or "") .. ": ") or "")
-                .. M.render(param.type)
-        end
-        local out = "fun(" .. table.concat(params, ", ") .. ")"
-        if node.returns and #node.returns > 0 then
-            ---@type string[]
-            local rets = {}
-            for i, ret in ipairs(node.returns) do
-                rets[i] = M.render(ret)
-            end
-            out = out .. ": " .. table.concat(rets, ", ")
-        end
-        return out
-    elseif kind == "tuple" then
-        ---@type string[]
-        local items = {}
-        for i, item in ipairs(node.items) do
-            items[i] = M.render(item)
-        end
-        return "[" .. table.concat(items, ", ") .. "]"
-    elseif kind == "shape" then
-        ---@type string[]
-        local fields = {}
-        for i, field in ipairs(node.fields) do
-            if field.computed then
-                fields[i] = "[" .. M.render(field.key_type) .. "]: " .. M.render(field.type)
-            else
-                fields[i] = field.name .. (field.optional and "?" or "") .. ": " .. M.render(field.type)
-            end
-        end
-        return "{ " .. table.concat(fields, ", ") .. " }"
-    end
-
-    return "<?>"
 end
 
 --- Visits every node in a type tree, outermost first.

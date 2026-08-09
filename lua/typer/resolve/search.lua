@@ -100,6 +100,7 @@ local function add_luarc(root, out)
     if type(decoded) ~= "table" then
         return
     end
+    ---@cast decoded table<string, typer.PlainValue>
 
     local library = decoded["workspace.library"] or (type(decoded.workspace) == "table" and decoded.workspace.library)
     if type(library) ~= "table" then
@@ -142,6 +143,7 @@ end
 ---@field entries typer.SearchEntry[]
 ---@field cpath_patterns string[]
 ---@field stub_root string|nil
+---@field cache table<string, typer.ModuleResolution>|nil  -- memoised by modpath.resolve
 
 --- Builds the search path for a run.
 ---@param config typer.Config

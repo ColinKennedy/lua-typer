@@ -139,6 +139,7 @@ local function serve(args)
 
         if request then
             local decoded = json.decode(request) or {}
+            ---@cast decoded typer.DaemonMessage
 
             if decoded.command == "stop" then
                 send_message(client, { ok = true, stopped = true })
@@ -214,6 +215,7 @@ local function request(config, payload)
     if not decoded then
         return nil, "malformed daemon response"
     end
+    ---@cast decoded typer.DaemonMessage
     return decoded, nil
 end
 
@@ -259,8 +261,11 @@ function M.main(args)
             return 2
         end
 
-        local reporter = args.json and json_report or vimgrep
-        io.write(reporter.render(response.diagnostics or {}, response.summary or {}))
+        if args.json then
+            io.write(json_report.render(response.diagnostics or {}, response.summary or {}))
+        else
+            io.write(vimgrep.render(response.diagnostics or {}, response.summary or {}))
+        end
         return #(response.diagnostics or {}) > 0 and 1 or 0
     end
 

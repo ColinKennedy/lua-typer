@@ -73,9 +73,12 @@ function M.list_lua(root)
         local stack = { root }
         while #stack > 0 do
             local dir = table.remove(stack)
-            local ok, iterator = pcall(lfs.dir, dir)
-            if ok then
-                for entry in iterator do
+            -- `lfs.dir` returns the iterator *and* the directory object it walks;
+            -- the iterator is called with that object as its state, so dropping
+            -- the second value makes the very first step error out.
+            local ok, iterator, directory = pcall(lfs.dir, dir)
+            if ok and iterator then
+                for entry in iterator, directory do
                     if entry ~= "." and entry ~= ".." then
                         local full = compat.join(dir, entry)
                         local attributes = lfs.attributes(full)

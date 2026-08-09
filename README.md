@@ -218,7 +218,7 @@ typer [options] <path>...
   --follow-requires <mode>    index | check | skip
   --no-cache
 
-typer daemon start|stop|status|check [--socket <path>]
+typer daemon start|stop|status|check
 ```
 
 Exit codes: `0` clean, `1` diagnostics reported, `2` tool error.

@@ -15,6 +15,7 @@
     },
     "workspace.checkThirdParty": "Disable",
     "workspace.ignoreDir": [
+        ".sessions",
         "stubs",
         "tests/fixtures"
     ]

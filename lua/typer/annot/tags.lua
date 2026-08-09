@@ -57,6 +57,11 @@ local KNOWN = {
 ---@field description string|nil
 ---@field name_col integer|nil
 ---@field name_ec integer|nil
+---@field exact boolean|nil        -- `---@class (exact)`
+---@field scope string|nil         -- `---@field package x`, and friends
+---@field key_type typer.TypeNode|nil  -- computed-key form: `---@field [string] integer`
+---@field computed boolean|nil     -- true alongside key_type
+---@field module string|nil        -- the module named by `---@meta <name>`
 
 --- Column of offset 1 of a doc comment's text. The lexer strips `---`, so the
 --- text begins three columns after the comment's own column.
@@ -347,7 +352,7 @@ end
 ---@param comment typer.Comment
 ---@param in_alias? boolean
 ---@return typer.Tag|nil
-function M.parse_comment(comment, in_alias)
+local function parse_comment(comment, in_alias)
     if not comment.doc then
         return nil
     end
@@ -436,7 +441,7 @@ function M.parse_block(comments)
     local in_alias = false
 
     for _, comment in ipairs(comments) do
-        local tag = M.parse_comment(comment, in_alias)
+        local tag = parse_comment(comment, in_alias)
         if tag then
             tags[#tags + 1] = tag
             -- Only an alias or enum opens a continuation run; any other tag closes it.

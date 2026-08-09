@@ -41,16 +41,31 @@ M.DEFAULT_SEVERITY = {
     ["annotation-syntax"] = "error",
 }
 
----@type table<string, integer>
-M.SEVERITY_RANK = { error = 3, warning = 2, hint = 1, off = 0 }
-
 --- Anything positional enough to hang a diagnostic on: an AST node, a token, a
 --- tag, or an ad-hoc `{ l = , c = }` pair.
----@class typer.Anchor
+--- The shape itself, for the ad-hoc `{ l = , c = }` pairs rules build inline.
+---@class typer.Span
 ---@field l integer
 ---@field c integer
 ---@field el integer|nil
 ---@field ec integer|nil
+
+--- Everything positional enough to hang a diagnostic on. LuaLS matches classes
+--- by name rather than by shape, so each one has to be spelled out here even
+--- though they all carry the same `l`/`c`/`ec` triple.
+---@alias typer.Anchor
+---| typer.Span
+---| typer.Node
+---| typer.Token
+---| typer.Tag
+---| typer.TypeNode
+---| typer.Binding
+---| typer.FieldEntry
+---| typer.FuncInfo
+---| typer.Param
+---| typer.GlobalRead
+---| typer.RequireSite
+---| typer.TypeDecl
 
 ---@class typer.Diagnostic
 ---@field file string

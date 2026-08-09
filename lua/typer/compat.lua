@@ -18,6 +18,9 @@ function M.load_string(chunk, name)
     if _VERSION == "Lua 5.1" and not M.is_jit then
         return loadstring(chunk, name)
     end
+    -- 5.2+ `load` takes a mode argument; the 5.1 definitions LuaLS checks against
+    -- describe the two-argument form, which this branch never runs under.
+    ---@diagnostic disable-next-line: param-type-mismatch, redundant-parameter
     return load(chunk, name, "b" == chunk:sub(1, 1) and "b" or "bt")
 end
 
@@ -30,6 +33,7 @@ function M.load_binary(chunk, name)
     if _VERSION == "Lua 5.1" and not M.is_jit then
         return loadstring(chunk, name)
     end
+    ---@diagnostic disable-next-line: param-type-mismatch, redundant-parameter
     return load(chunk, name, "b")
 end
 
@@ -49,6 +53,9 @@ function M.setfenv(fn, env)
             break
         end
         if name == "_ENV" then
+            -- 5.2+ only, which is exactly the case this branch exists for: 5.1
+            -- took the `setfenv` path above and never reaches here.
+            ---@diagnostic disable-next-line: deprecated
             debug.upvaluejoin(fn, i, function()
                 return env
             end, 1)
@@ -112,10 +119,10 @@ function M.write_file(path, content)
 end
 
 ---@type string
-M.sep = package.config and package.config:sub(1, 1) or "/"
+local sep = package.config and package.config:sub(1, 1) or "/"
 
 ---@type boolean
-M.is_windows = M.sep == "\\"
+M.is_windows = sep == "\\"
 
 --- Normalise a path to forward slashes and collapse `.`/`..`/duplicate slashes.
 ---@param path string
@@ -205,12 +212,6 @@ function M.dirname(path)
         return path:sub(1, 1) == "/" and "/" or "."
     end
     return dir
-end
-
----@param path string
----@return string
-function M.basename(path)
-    return (M.normalize(path):match("[^/]*$"))
 end
 
 return M

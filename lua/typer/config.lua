@@ -22,7 +22,15 @@ local diagnostic = require("typer.diagnostic")
 ---@field undefined_globals boolean
 ---@field optional_param string
 ---@field optional_return string
+---@field inherit_path boolean        -- inherit the interpreter's package.path
+---@field cache boolean               -- use the on-disk declaration cache
 ---@field root string                 -- directory the config was found in
+---@field path string|nil             -- the config file itself, when one was found
+---@field workspace string|nil        -- workspace root, when the host supplies one
+---@field global_allowlist table<string, boolean>|nil
+--- Globs compiled to Lua patterns once, at load time.
+---@field exclude_patterns string[]
+---@field ignore_missing_patterns string[]
 
 ---@return typer.Config
 function M.defaults()
@@ -96,13 +104,19 @@ local function load_json_config(path)
     if not source then
         return nil, "cannot read " .. path
     end
-    return json.decode(source)
+
+    local decoded, err = json.decode(source)
+    if type(decoded) ~= "table" then
+        return nil, err or (path .. " is not a JSON object")
+    end
+    ---@cast decoded table<string, typer.PlainValue>
+    return decoded, nil
 end
 
 --- Searches upward from `start` for a config file.
 ---@param start string
 ---@return string|nil
-function M.discover(start)
+local function discover(start)
     local dir = compat.normalize(start)
     local guard = 0
 
@@ -139,6 +153,19 @@ local function merge(target, source)
     end
 end
 
+--- Converts a glob to a Lua pattern. `**` crosses separators, `*` does not.
+---@param glob string
+---@return string
+local function glob_to_pattern(glob)
+    local pattern = glob:gsub("[%^%$%(%)%%%.%[%]%+%-]", "%%%0")
+    pattern = pattern:gsub("%*%*/?", "\1")
+    pattern = pattern:gsub("%*", "\2")
+    pattern = pattern:gsub("%?", ".")
+    pattern = pattern:gsub("\1", ".*")
+    pattern = pattern:gsub("\2", "[^/]*")
+    return "^" .. pattern .. "$"
+end
+
 --- Loads configuration, applying defaults then the discovered file.
 ---@param explicit_path string|nil
 ---@param cwd string
@@ -146,7 +173,7 @@ end
 ---@return string|nil error
 function M.load(explicit_path, cwd)
     local config = M.defaults()
-    local path = explicit_path or M.discover(cwd)
+    local path = explicit_path or discover(cwd)
 
     if path then
         ---@type table<string, typer.PlainValue>|nil, string|nil
@@ -183,27 +210,14 @@ function M.load(explicit_path, cwd)
     -- Turn the ignore_missing globs into Lua patterns once.
     config.ignore_missing_patterns = {}
     for _, glob in ipairs(config.ignore_missing) do
-        config.ignore_missing_patterns[#config.ignore_missing_patterns + 1] = M.glob_to_pattern(glob)
+        config.ignore_missing_patterns[#config.ignore_missing_patterns + 1] = glob_to_pattern(glob)
     end
     config.exclude_patterns = {}
     for _, glob in ipairs(config.exclude) do
-        config.exclude_patterns[#config.exclude_patterns + 1] = M.glob_to_pattern(glob)
+        config.exclude_patterns[#config.exclude_patterns + 1] = glob_to_pattern(glob)
     end
 
     return config, nil
-end
-
---- Converts a glob to a Lua pattern. `**` crosses separators, `*` does not.
----@param glob string
----@return string
-function M.glob_to_pattern(glob)
-    local pattern = glob:gsub("[%^%$%(%)%%%.%[%]%+%-]", "%%%0")
-    pattern = pattern:gsub("%*%*/?", "\1")
-    pattern = pattern:gsub("%*", "\2")
-    pattern = pattern:gsub("%?", ".")
-    pattern = pattern:gsub("\1", ".*")
-    pattern = pattern:gsub("\2", "[^/]*")
-    return "^" .. pattern .. "$"
 end
 
 ---@param config typer.Config

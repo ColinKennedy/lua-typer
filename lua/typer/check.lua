@@ -23,13 +23,22 @@ local search_mod = require("typer.resolve.search")
 local modpath = require("typer.resolve.modpath")
 local cache_mod = require("typer.resolve.cache")
 
----@type typer.Rule[]
+local declaration_rules = require("typer.rules.declarations")
+local function_rules = require("typer.rules.functions")
+local class_rules = require("typer.rules.classes")
+local completeness_rules = require("typer.rules.completeness")
+local global_rules = require("typer.rules.globals")
+
+--- Every rule, named at its entry point rather than reached through the module
+--- table: a static list of functions is what lets deadcode and privata see that
+--- each `run` has a caller.
+---@type (fun(model: typer.FileModel, ctx: typer.RuleContext))[]
 local RULES = {
-    require("typer.rules.declarations"),
-    require("typer.rules.functions"),
-    require("typer.rules.classes"),
-    require("typer.rules.completeness"),
-    require("typer.rules.globals"),
+    declaration_rules.run,
+    function_rules.run,
+    class_rules.run,
+    completeness_rules.run,
+    global_rules.run,
 }
 
 ---@class typer.Run
@@ -39,6 +48,7 @@ local RULES = {
 ---@field diagnostics typer.Diagnostic[]
 ---@field models table<string, typer.FileModel>
 ---@field checked string[]
+---@field is_checked table<string, boolean>
 ---@field indexed_count integer
 ---@field cwd string
 ---@field cache typer.Cache
@@ -81,6 +91,7 @@ local RULES = {
 ---@field use_cache boolean|nil
 ---@field model_cache table<string, typer.ModelCacheEntry>|nil
 ---@field cwd string|nil
+---@field config_path string|nil
 
 ---@param run typer.Run
 ---@param diag typer.Diagnostic
@@ -262,6 +273,49 @@ local function expand_targets(paths, config, cwd)
     return out
 end
 
+--- Folds one workspace file into the index, from the on-disk cache when its
+--- slice is still valid and by parsing it otherwise. This is the path the cache
+--- exists for: the eager scan below reads every file in the workspace purely to
+--- harvest ambient declarations, and re-parsing them each run is the cost.
+---
+--- Files being checked never take the cached path -- they are parsed anyway, for
+--- the rules -- so a cached slice is always an unchecked one.
+---@param run typer.Run
+---@param path string
+---@param role string
+local function index_workspace_file(run, path, role)
+    if run.registry.indexed[path] then
+        return
+    end
+
+    if not run.is_checked[path] then
+        local cached = cache_mod.get(run.cache, path)
+        if cached and cached.slice then
+            registry_mod.index_slice(run.registry, path, cached.slice, {
+                checked = false,
+                is_stub = role == "stub" or cached.slice.is_meta,
+            })
+            run.indexed_count = run.indexed_count + 1
+            return
+        end
+    end
+
+    local model = load_model(run, path, role)
+    if not model then
+        return
+    end
+
+    local slice = registry_mod.slice_of(model)
+    registry_mod.index_slice(run.registry, path, slice, {
+        checked = false,
+        is_stub = role == "stub" or model.is_meta,
+    })
+
+    if not run.is_checked[path] then
+        cache_mod.put(run.cache, path, { slice = slice })
+    end
+end
+
 --- Eagerly indexes the workspace: ambient `---@class` declarations may live in
 --- files that nothing requires, so lazy loading alone would miss them.
 ---@param run typer.Run
@@ -277,13 +331,7 @@ local function index_workspace(run)
                 for _, file in ipairs(fs.list_lua(dir)) do
                     local absolute = compat.absolute(file, run.cwd)
                     if not run.models[absolute] and not config_mod.is_excluded(run.config, absolute) then
-                        local model = load_model(run, absolute, entry.role)
-                        if model then
-                            registry_mod.index_file(run.registry, model, {
-                                checked = false,
-                                is_stub = entry.role == "stub" or model.is_meta,
-                            })
-                        end
+                        index_workspace_file(run, absolute, entry.role)
                     end
                 end
             end
@@ -314,6 +362,7 @@ function M.run(paths, options)
         diagnostics = {},
         models = {},
         checked = {},
+        is_checked = {},
         indexed_count = 0,
         cache = cache_mod.open(config, options.use_cache ~= false),
         model_cache = options.model_cache,
@@ -323,7 +372,7 @@ function M.run(paths, options)
     local targets = expand_targets(paths, config, run.cwd)
 
     ---@type table<string, boolean>
-    local is_checked = {}
+    local is_checked = run.is_checked
     for _, path in ipairs(targets) do
         is_checked[path] = true
     end
@@ -388,8 +437,8 @@ function M.run(paths, options)
                     emit(run, diag)
                 end,
             }
-            for _, rule in ipairs(RULES) do
-                rule.run(model, context)
+            for _, run_rule in ipairs(RULES) do
+                run_rule(model, context)
             end
 
             -- Suppression applies only to this file's own diagnostics.

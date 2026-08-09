@@ -66,9 +66,12 @@ end
 ---@field el integer
 ---@field ec integer
 
+--- The error every layer raises: the lexer, the Lua parser, and the type
+--- parser. `kind` says which one, so a caller can tell a broken file from a
+--- broken annotation.
 ---@class typer.LexError
 ---@field typer_error true
----@field kind "lex"
+---@field kind "lex"|"parse"|"type"|"tag"
 ---@field msg string
 ---@field l integer
 ---@field c integer
@@ -417,6 +420,7 @@ function M.lex(src)
 
                 local level, body_start = long_bracket_level(state, state.pos)
                 if level then
+                    ---@cast body_start integer
                     state.pos = body_start
                     local text = read_long_body(state, level, "long comment")
                     cn = cn + 1
@@ -496,6 +500,8 @@ function M.lex(src)
                 local start_col = column(state, state.pos)
                 local start_line = state.line
                 local level, body_start = long_bracket_level(state, state.pos)
+                ---@cast level integer
+                ---@cast body_start integer
                 state.pos = body_start
                 local value = read_long_body(state, level, "long string")
                 tn = tn + 1

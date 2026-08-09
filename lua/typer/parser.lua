@@ -81,12 +81,92 @@ local BLOCK_ENDERS = {
 ---@field cond typer.Node
 ---@field body typer.Node[]
 
----@class typer.Node
+--- A node between its constructor and `span`: the payload is set, the position
+--- is not. Everything typer.Node adds is optional here, which is what lets a
+--- constructor hand a half-built table to `span`.
+---@class typer.PartialNode
+---@field k string
+---@field l integer|nil
+---@field c integer|nil
+---@field el integer|nil
+---@field ec integer|nil
+
+--- An AST node. Lua's grammar makes this a union: `k` names the shape and the
+--- payload below belongs to one kind or a few related ones. It is one class with
+--- optional fields rather than thirty subclasses because every consumer switches
+--- on `k` and then reads the payload directly -- subclasses would only buy
+--- narrowing that nothing in this codebase asks for.
+---@class typer.Node : typer.PartialNode
 ---@field k string            -- node kind
 ---@field l integer
 ---@field c integer
 ---@field el integer
 ---@field ec integer
+--- Name, LocalFunction, Label, and the `a.b` form of Index.
+---@field name string
+---@field name_l integer
+---@field name_c integer
+---@field name_ec integer
+--- String, Number: the literal value.
+---@field v string|number
+--- Function.
+---@field params typer.Param[]
+---@field is_vararg boolean
+--- Function, FunctionStat.
+---@field is_method boolean
+--- Function, While, Do, ForNum, ForIn, Repeat, Chunk.
+---@field body typer.Node[]
+--- Table.
+---@field fields typer.TableField[]
+--- Paren, CallStat.
+---@field expr typer.Node
+--- Index, MethodCall: the receiver.
+---@field obj typer.Node
+--- Index: `[expr]` form, and the span of the key either way.
+---@field key typer.Node
+---@field key_l integer
+---@field key_c integer
+---@field key_ec integer
+---@field computed boolean
+--- MethodCall.
+---@field method string
+---@field method_l integer
+---@field method_c integer
+---@field method_ec integer
+--- Call.
+---@field callee typer.Node
+--- Call, MethodCall.
+---@field args typer.Node[]
+--- UnOp, BinOp.
+---@field op string
+---@field operand typer.Node
+---@field left typer.Node
+---@field right typer.Node
+--- LocalFunction, FunctionStat.
+---@field fn typer.Node
+--- FunctionStat: the name being assigned, as an expression.
+---@field target typer.Node
+--- Local, ForIn.
+---@field names typer.LocalName[]
+--- Local, ForIn, Return, Assign.
+---@field exprs typer.Node[]
+--- Assign.
+---@field targets typer.Node[]
+--- If.
+---@field clauses typer.IfClause[]
+---@field else_body typer.Node[]
+--- While, Repeat.
+---@field cond typer.Node
+--- ForNum.
+---@field var typer.LocalName
+---@field from typer.Node
+---@field to typer.Node
+---@field step typer.Node
+--- Goto.
+---@field label string
+--- Chunk.
+---@field comments typer.Comment[]
+---@field tokens typer.Token[]
 
 ---@class typer.ParseState
 ---@field tokens typer.Token[]
@@ -169,16 +249,18 @@ local function expect_name(state)
 end
 
 --- Stamps positional fields onto a node from a start token and an end token.
----@generic T: table
----@param node T
+--- The end anchor is a node wherever a construct closes with a nested one, as
+--- `function f() ... end` does.
+---@param node typer.PartialNode
 ---@param start_token typer.Token
----@param end_token typer.Token
----@return T
+---@param end_token typer.Token|typer.Node
+---@return typer.Node
 local function span(node, start_token, end_token)
     node.l = start_token.l
     node.c = start_token.c
     node.el = end_token.el
     node.ec = end_token.ec
+    ---@cast node typer.Node
     return node
 end
 
@@ -443,6 +525,9 @@ local function parse_subexpression(state, limit)
 
         advance(state)
         local right = parse_subexpression(state, priority[2])
+        -- A `k`-tagged union: this kind carries the fields below and none of the
+        -- others.
+        ---@diagnostic disable-next-line: missing-fields
         left = {
             k = "BinOp",
             op = op_token.v,
@@ -753,10 +838,14 @@ function M.parse(src)
     end)
 
     if not ok then
-        if type(result) == "table" and result.typer_error then
-            return nil, result
+        -- pcall hands back whatever was raised: one of our own error tables, or
+        -- a string from a genuine runtime fault.
+        ---@type typer.LexError|string
+        local raised = result
+        if type(raised) == "table" and raised.typer_error then
+            return nil, raised
         end
-        error(result, 0)
+        error(raised, 0)
     end
 
     return {

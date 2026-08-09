@@ -10,7 +10,7 @@ local vimgrep = require("typer.report.vimgrep")
 local json_report = require("typer.report.json")
 
 ---@type string
-M.VERSION = "0.1.0"
+local VERSION = "0.1.0"
 
 local USAGE = [[
 typer -- mypy --strict, for Lua
@@ -32,7 +32,7 @@ usage: typer [options] <path>...
 
   --version, --help
 
-typer daemon start|stop|status [--socket <path>]
+typer daemon start|stop|status
 typer daemon check <path>...
 ]]
 
@@ -50,13 +50,14 @@ typer daemon check <path>...
 ---@field follow_requires string|nil
 ---@field use_cache boolean
 ---@field daemon string|nil
----@field socket string|nil
+---@field help boolean|nil
+---@field version boolean|nil
 
 --- Parses argv.
 ---@param argv string[]
 ---@return typer.CliArgs|nil
 ---@return string|nil error
-function M.parse_args(argv)
+local function parse_args(argv)
     ---@type typer.CliArgs
     local args = {
         paths = {},
@@ -122,9 +123,6 @@ function M.parse_args(argv)
                 return nil, "--stub-path requires a value"
             end
             args.stub_path[#args.stub_path + 1] = argv[index]
-        elseif item == "--socket" then
-            index = index + 1
-            args.socket = argv[index]
         elseif item == "--severity" then
             index = index + 1
             local pair = argv[index]
@@ -170,7 +168,7 @@ end
 ---@param argv string[]
 ---@return integer
 function M.main(argv)
-    local args, parse_error = M.parse_args(argv)
+    local args, parse_error = parse_args(argv)
     if not args then
         io.stderr:write("typer: " .. parse_error .. "\n")
         io.stderr:write(USAGE)
@@ -183,16 +181,19 @@ function M.main(argv)
     end
 
     if args.version then
-        io.write("typer " .. M.VERSION .. "\n")
+        io.write("typer " .. VERSION .. "\n")
         return 0
     end
 
     if args.daemon then
-        local ok, daemon = pcall(require, "typer.daemon")
-        if not ok then
+        -- luasocket is optional, so the probe stays a pcall -- but the module
+        -- itself is required by name, where a reader (and a static checker) can
+        -- see that `daemon.main` has a caller.
+        if not pcall(require, "socket") then
             io.stderr:write("typer: daemon mode needs luasocket (optional dependency)\n")
             return 2
         end
+        local daemon = require("typer.daemon")
         return daemon.main(args)
     end
 
@@ -241,8 +242,11 @@ function M.main(argv)
         use_cache = args.use_cache,
     })
 
-    local reporter = args.json and json_report or vimgrep
-    io.write(reporter.render(diagnostics, summary))
+    if args.json then
+        io.write(json_report.render(diagnostics, summary))
+    else
+        io.write(vimgrep.render(diagnostics, summary))
+    end
 
     if summary.had_parse_error then
         return 2

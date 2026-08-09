@@ -17,8 +17,8 @@ local FORMAT_VERSION = 1
 
 --- One cached file's declaration slice, keyed by its `mtime:size` signature.
 ---@class typer.CacheEntry
----@field signature string
----@field decls typer.PlainValue|nil
+---@field signature string|nil   -- stamped by M.put, never by the caller
+---@field slice typer.IndexSlice|nil
 
 ---@class typer.Cache
 ---@field enabled boolean

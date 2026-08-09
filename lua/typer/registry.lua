@@ -18,6 +18,9 @@ local M = {}
 ---@field parents typer.TypeNode[]
 ---@field generics table<string, boolean>
 ---@field checked boolean            -- declared in a file that is being reported on
+---@field is_stub boolean|nil        -- came from a `---@meta` stub, which outranks source
+---@field alias_type typer.TypeNode|nil   -- the aliased type, for kind == "alias"
+---@field tag typer.Tag|nil          -- the tag that declared it
 
 --- Two declarations of the same name, reported at both sites.
 ---@class typer.DuplicateDecl
@@ -148,36 +151,37 @@ local function index_tags(registry, tags, file, opts)
     end
 end
 
---- Indexes one analysed file into the registry.
----@param registry typer.Registry
----@param model typer.FileModel
----@param opts typer.IndexOptions
-function M.index_file(registry, model, opts)
-    opts = opts or {}
+--- Everything a file contributes to the index, reduced to plain data: tag runs
+--- in source order plus the globals it declares. This is the unit the on-disk
+--- cache stores, so a warm run can fold a file in without parsing it.
+---@class typer.IndexSlice
+---@field tag_runs typer.Tag[][]
+---@field globals typer.GlobalDecl[]
+---@field is_meta boolean
 
-    -- Idempotent per file. A checked file that also sits under a `source_root` is
-    -- reached twice -- once by the eager workspace scan, once by the checked pass
-    -- -- and indexing it twice registers every declaration twice, which shows up
-    -- as each `duplicate-class` being reported two times.
-    if registry.indexed[model.path] then
-        return
-    end
-    registry.indexed[model.path] = true
+--- Reduces an analysed file to its index slice.
+---@param model typer.FileModel
+---@return typer.IndexSlice
+function M.slice_of(model)
+    ---@type typer.Tag[][]
+    local tag_runs = {}
+    ---@type typer.GlobalDecl[]
+    local globals = {}
 
     for _, tags in ipairs(model.decl_tags) do
-        index_tags(registry, tags, model.path, opts)
+        tag_runs[#tag_runs + 1] = tags
     end
 
     for _, binding in ipairs(model.bindings) do
         if #binding.tags > 0 then
-            index_tags(registry, binding.tags, model.path, opts)
+            tag_runs[#tag_runs + 1] = binding.tags
         end
         -- Any global *assignment* makes the name exist, annotated or not: that is
         -- what `undefined-global` asks about. Whether the assignment site is
         -- properly declared is a separate question, answered by `global-decl` at
         -- that site -- and only in checked files.
         if binding.scope == "global" then
-            registry.globals[binding.name] = {
+            globals[#globals + 1] = {
                 name = binding.name,
                 file = model.path,
                 l = binding.l,
@@ -189,25 +193,53 @@ function M.index_file(registry, model, opts)
 
     for _, info in ipairs(model.functions) do
         if #info.tags > 0 then
-            index_tags(registry, info.tags, model.path, opts)
+            tag_runs[#tag_runs + 1] = info.tags
         end
     end
 
     if model.declared_globals then
-        for name, entry in pairs(model.declared_globals) do
-            registry.globals[name] = entry
+        for _, entry in pairs(model.declared_globals) do
+            globals[#globals + 1] = entry
         end
+    end
+
+    return { tag_runs = tag_runs, globals = globals, is_meta = model.is_meta }
+end
+
+--- Folds a slice into the registry. A slice read back from the cache and one
+--- taken from a freshly parsed file go through this same path, so a warm run
+--- and a cold one build an identical index.
+---@param registry typer.Registry
+---@param file string
+---@param slice typer.IndexSlice
+---@param opts typer.IndexOptions
+function M.index_slice(registry, file, slice, opts)
+    opts = opts or {}
+
+    -- Idempotent per file. A checked file that also sits under a `source_root` is
+    -- reached twice -- once by the eager workspace scan, once by the checked pass
+    -- -- and indexing it twice registers every declaration twice, which shows up
+    -- as each `duplicate-class` being reported two times.
+    if registry.indexed[file] then
+        return
+    end
+    registry.indexed[file] = true
+
+    for _, tags in ipairs(slice.tag_runs) do
+        index_tags(registry, tags, file, opts)
+    end
+
+    for _, entry in ipairs(slice.globals) do
+        registry.globals[entry.name] = entry
     end
 end
 
---- Registers a global name as declared (used by stdlib stubs).
+--- Indexes one analysed file into the registry.
 ---@param registry typer.Registry
----@param name string
----@param file string
-function M.declare_global(registry, name, file)
-    if not registry.globals[name] then
-        registry.globals[name] = { name = name, file = file, l = 1, c = 1 }
-    end
+---@param model typer.FileModel
+---@param opts typer.IndexOptions
+function M.index_file(registry, model, opts)
+    M.index_slice(registry, model.path, M.slice_of(model), opts)
 end
 
 ---@param registry typer.Registry
@@ -221,7 +253,7 @@ end
 ---@param registry typer.Registry
 ---@param decl typer.TypeDecl
 ---@param visit fun(decl: typer.TypeDecl)
-function M.walk_parents(registry, decl, visit)
+local function walk_parents(registry, decl, visit)
     ---@type table<string, boolean>
     local seen = { [decl.name] = true }
     ---@type typer.TypeDecl[]
@@ -255,7 +287,7 @@ end
 ---@return boolean
 function M.has_field(registry, decl, field)
     local found = false
-    M.walk_parents(registry, decl, function(current)
+    walk_parents(registry, decl, function(current)
         if current.fields[field] then
             found = true
         end

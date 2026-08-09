@@ -40,6 +40,8 @@ local docblock = require("typer.docblock")
 ---@field explicit_nil boolean|nil
 ---@field inherits typer.Node|nil             -- detected base expression
 ---@field module string|nil                   -- for `require` bindings
+---@field late_table boolean|nil              -- assigned a table after declaration
+---@field reassigned boolean|nil              -- a global written more than once
 
 ---@class typer.FuncInfo
 ---@field node typer.Node
@@ -54,6 +56,7 @@ local docblock = require("typer.docblock")
 ---@field has_nil_return boolean
 ---@field owner typer.Binding|nil      -- class the method belongs to
 ---@field exempt boolean               -- inline expression, typed by context
+---@field indeterminate_arity boolean|nil  -- returns a call, so arity is unknown
 
 --- The line range of one statement, so `-- typer: ignore` can cover a whole
 --- multi-line statement rather than just its first line.
@@ -89,6 +92,8 @@ local docblock = require("typer.docblock")
 ---@field statements typer.StatementSpan[]
 ---@field role string|nil
 ---@field source string|nil
+---@field module_returns typer.Binding|nil  -- the binding this module returns
+---@field declared_globals table<string, typer.GlobalDecl>|nil
 
 ---@class typer.Walker
 ---@field model typer.FileModel
@@ -192,7 +197,11 @@ local function require_module(node)
     end
     local first = node.args and node.args[1]
     if first and first.k == "String" then
-        return first.v
+        -- `v` is string|number across the literal kinds; a String node settles it.
+        local value = first.v
+        if type(value) == "string" then
+            return value
+        end
     end
     return nil
 end
@@ -438,7 +447,7 @@ walk_expr = function(walker, node, position, tags)
         end
     elseif kind == "Table" then
         for _, field in ipairs(node.fields) do
-            if field.computed then
+            if field.kind == "computed" then
                 walk_expr(walker, field.key)
             end
             walk_expr(walker, field.value, "inline")
@@ -873,26 +882,27 @@ walk_block = function(walker, block)
 end
 
 --- Signals that make a table class-shaped, in the order that reads best in a
---- message. Shared with the class rules so `table-decl` can stand down when the
---- more specific `missing-class` applies.
+--- message.
 ---@type string[]
-M.CLASS_SIGNALS = { "colon-method", "index", "metatable", "self-assign" }
+local CLASS_SIGNALS = { "colon-method", "index", "metatable", "self-assign" }
 
 ---@type table<string, string>
-M.CLASS_SIGNAL_REASON = {
+local CLASS_SIGNAL_REASON = {
     ["colon-method"] = "defines ':' methods",
     ["index"] = "assigns __index",
     ["metatable"] = "is used as a metatable",
     ["self-assign"] = "assigns fields on 'self'",
 }
 
---- The reason a binding looks like a class, or nil when it does not.
+--- The reason a binding looks like a class, or nil when it does not. Shared with
+--- the class rules so `table-decl` can stand down when the more specific
+--- `missing-class` applies.
 ---@param binding typer.Binding
 ---@return string|nil
 function M.class_shape_reason(binding)
-    for _, signal in ipairs(M.CLASS_SIGNALS) do
+    for _, signal in ipairs(CLASS_SIGNALS) do
         if binding.signals[signal] then
-            return M.CLASS_SIGNAL_REASON[signal]
+            return CLASS_SIGNAL_REASON[signal]
         end
     end
     return nil

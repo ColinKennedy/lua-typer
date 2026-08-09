@@ -13,6 +13,7 @@ local parser = require("typer.parser")
 
 ---@param root string
 ---@param out string[]
+---@return string[]
 local function collect(root, out)
     local pipe = io.popen(("find %q -name '*.lua' -type f 2>/dev/null"):format(root))
     if not pipe then
@@ -66,7 +67,7 @@ local lex_elapsed = clock() - lex_start
 local parse_start = clock()
 for _, entry in ipairs(sources) do
     local chunk, err = parser.parse(entry.src)
-    if not chunk then
+    if not chunk and err then
         -- Only a real failure if the host interpreter accepts the file.
         local loaded = compat.load_string(entry.src, "@" .. entry.path)
         if loaded then

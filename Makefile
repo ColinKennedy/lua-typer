@@ -13,7 +13,10 @@ LINT_TARGETS ?= bin/typer lua tests/run.lua tests/corpus.lua
 # root rather than the file list above.
 SOURCE ?= lua
 
-lint: stylua luacheck privata deadcode llscheck
+# Every check that only reads the tree. `stylua` is deliberately absent -- it
+# rewrites files, so `lint` uses `check-stylua` and stays safe to run anywhere,
+# CI included.
+lint: check-stylua luacheck privata deadcode llscheck rockspec
 
 check-stylua:
 	stylua $(LINT_TARGETS) --color always --check

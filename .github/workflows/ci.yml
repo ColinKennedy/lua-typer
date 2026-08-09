@@ -6,42 +6,108 @@ on:
 
 jobs:
   test:
+    name: lua ${{ matrix.lua }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         lua: ["5.1", "5.2", "5.3", "5.4", "luajit"]
-    name: lua ${{ matrix.lua }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: leafo/gh-actions-lua@v10
+      # v11 or newer is required for `luajit`: up to v10 the action fetched
+      # LuaJIT from luajit.org, which stopped publishing the 2.1 beta tarball,
+      # so the job died on a 404 before running a single test.
+      - uses: leafo/gh-actions-lua@v13
         with:
           luaVersion: ${{ matrix.lua }}
 
-      - uses: leafo/gh-actions-luarocks@v4
+      # v6 defaults to LuaRocks 3.13; v4 pinned 3.8, which cannot install
+      # anything under LuaJIT any more. LuaJIT caps a function at 65536
+      # constants and luarocks.org's Lua 5.1 manifest has outgrown that, so
+      # every rock lookup died on "main function has more than 65536 constants".
+      - uses: leafo/gh-actions-luarocks@v6
 
       # Optional dependencies: typer must pass with and without them, so the
       # matrix installs them and the suite runs twice.
-      - name: install optional deps
+      - name: Install the optional dependencies
         run: luarocks install luafilesystem && luarocks install luasocket
 
-      - name: test (with lfs + luasocket)
-        run: lua tests/run.lua
+      - name: Run the test suite (with lfs + luasocket)
+        run: make test
 
-      - name: test (no optional deps)
+      # Dogfooding. A tool that cannot survive its own analysis is not finished.
+      - name: Run typer on itself (with lfs + luasocket)
+        run: make self-check
+
+      - name: Drop the optional dependencies
         run: |
           luarocks remove --force luafilesystem
           luarocks remove --force luasocket
-          lua tests/run.lua
 
-      - name: parser corpus
-        run: lua tests/corpus.lua lua stubs tests
+      - name: Run the test suite (no optional dependencies)
+        run: make test
 
-      - name: rockspec lints
-        run: luarocks lint typer-scm-1.rockspec
+      - name: Run typer on itself (no optional dependencies)
+        run: make self-check
 
-      # typer must pass its own strictest check. This is the regression guard on
-      # every annotation in the codebase -- exit 0 means zero diagnostics.
-      - name: typer checks itself
-        run: lua bin/typer lua/
+      # The parser has to survive every Lua file in the repository, stubs and
+      # intentionally odd fixtures included.
+      - name: Run the parser corpus
+        run: make corpus
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.4"
+
+      - uses: leafo/gh-actions-luarocks@v6
+
+      - run: luarocks install luacheck
+      - run: make luacheck
+
+      - run: luarocks install privata
+      - name: Report public names only used privately
+        run: make privata
+
+      - run: luarocks install deadcode
+      - name: Report unreachable code
+        run: make deadcode
+
+      # A rockspec that stops matching the tree is only ever discovered at
+      # release time otherwise, when it is most expensive to fix.
+      - run: make rockspec
+
+      - uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: latest
+          # Kept in step with LINT_TARGETS in the Makefile. `bin/typer` is named
+          # without an extension, so stylua will not find it by walking `bin`
+          # and has to be pointed at it.
+          args: --check bin/typer lua tests/run.lua tests/corpus.lua
+
+  llscheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.4"
+
+      - uses: leafo/gh-actions-luarocks@v6
+
+      # llscheck drives lua-language-server, which is a separate binary.
+      - uses: jdx/mise-action@v2
+        with:
+          tool_versions: |
+            lua-language-server latest
+
+      - run: luarocks install llscheck
+      - run: make llscheck

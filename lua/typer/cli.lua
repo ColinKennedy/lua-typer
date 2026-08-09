@@ -9,8 +9,11 @@ local config_mod = require("typer.config")
 local vimgrep = require("typer.report.vimgrep")
 local json_report = require("typer.report.json")
 
+-- Read from the library table rather than repeated here: `typer --version` and
+-- `require("typer").VERSION` are the same number, and the release workflow
+-- checks that number against the tag.
 ---@type string
-local VERSION = "0.1.0"
+local VERSION = require("typer").VERSION
 
 local USAGE = [[
 typer -- mypy --strict, for Lua

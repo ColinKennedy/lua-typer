@@ -14,6 +14,7 @@
 ---@class typer.resolve.search
 local M = {}
 
+local bundle = require("typer.bundle")
 local compat = require("typer.compat")
 local fs = require("typer.fs")
 local json = require("typer.json")
@@ -40,9 +41,18 @@ local function expand(path)
     return expanded
 end
 
---- Where the bundled stubs live, relative to this file.
+--- Where the bundled stubs live.
 ---@return string|nil
 local function bundled_stub_root()
+    -- `bin/typer` resolved the install root from `arg[0]`. It is the only thing
+    -- that knows where an installed rock put `stubs/`, so it wins.
+    if bundle.root then
+        local root = compat.join(bundle.root, "stubs")
+        if fs.is_dir(root) then
+            return root
+        end
+    end
+
     -- `package.searchpath` is 5.2+; probe `package.path` entries by hand so this
     -- works identically on 5.1.
     for template in package.path:gmatch("[^;]+") do
@@ -155,11 +165,13 @@ function M.build(config, overrides)
     ---@type typer.SearchEntry[]
     local entries = {}
 
+    -- `absolute`, not `join`: a `--stub-path` naming a stub directory outside the
+    -- project is the normal case, and `join` would glue it onto the root.
     for _, dir in ipairs(overrides.stub_paths or {}) do
-        add_dir(compat.join(config.root, dir), "stub", entries)
+        add_dir(compat.absolute(expand(dir), config.root), "stub", entries)
     end
     for _, dir in ipairs(config.stub_paths or {}) do
-        add_dir(compat.join(config.root, dir), "stub", entries)
+        add_dir(compat.absolute(expand(dir), config.root), "stub", entries)
     end
 
     local stub_root = bundled_stub_root()
@@ -188,7 +200,7 @@ function M.build(config, overrides)
         if template:find("?", 1, true) then
             add_path_string(template, "library", entries)
         else
-            add_dir(compat.join(config.root, template), "library", entries)
+            add_dir(compat.absolute(expand(template), config.root), "library", entries)
         end
     end
 

@@ -2,7 +2,7 @@ package = "typer"
 version = "scm-1"
 
 source = {
-  url = "git+https://github.com/selecaoone/typer.git",
+  url = "git+https://github.com/ColinKennedy/lua-typer.git",
 }
 
 description = {
@@ -17,7 +17,7 @@ description = {
     is an error to fix, not something typer papers over -- and there is no
     baseline mode, deliberately.
   ]],
-  homepage = "https://github.com/selecaoone/typer",
+  homepage = "https://github.com/ColinKennedy/lua-typer",
   license = "MIT",
 }
 

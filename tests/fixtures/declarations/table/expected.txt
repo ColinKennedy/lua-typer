@@ -1,0 +1,2 @@
+input.lua:1:7: error: [table-decl] table 'bar' has no ---@type or ---@class; inference cannot tell a literal shape from a class
+input.lua:3:7: error: [table-decl] table 'populated' has no ---@type or ---@class; inference cannot tell a literal shape from a class

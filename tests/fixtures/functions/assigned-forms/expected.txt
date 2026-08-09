@@ -1,0 +1,4 @@
+input.lua:7:20: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+input.lua:7:29: error: [missing-param] parameter 'a' has no ---@param annotation
+input.lua:20:20: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+input.lua:20:29: error: [missing-param] parameter 'b' has no ---@param annotation

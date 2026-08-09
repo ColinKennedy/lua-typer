@@ -1,0 +1,3 @@
+input.lua:8:13: error: [vague-table] 'table' is not specific enough
+input.lua:9:20: error: [disallowed-any] 'any' is disallowed
+input.lua:9:26: error: [vague-table] 'table' is not specific enough

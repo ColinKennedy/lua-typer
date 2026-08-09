@@ -1,0 +1,2 @@
+input.lua:4:5: error: [self-param] 'self' is implicit on a ':' method; remove this ---@param
+input.lua:7:8: error: [missing-field] field 'value' is assigned on class 'Widget' but has no ---@field

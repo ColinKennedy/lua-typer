@@ -1,0 +1,1 @@
+input.lua:19:24: error: [missing-param] parameter 'y' has no ---@param annotation

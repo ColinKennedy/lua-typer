@@ -1,0 +1,3 @@
+input.lua:1:7: error: [missing-class] table 'Colon' defines ':' methods but has no ---@class annotation
+input.lua:4:7: error: [missing-class] table 'Indexed' assigns __index but has no ---@class annotation
+input.lua:7:7: error: [missing-class] table 'Meta' is used as a metatable but has no ---@class annotation

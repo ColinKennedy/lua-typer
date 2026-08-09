@@ -1,0 +1,1 @@
+input.lua:6:7: error: [unresolved-type] type 'Missing' is not declared anywhere in the type index

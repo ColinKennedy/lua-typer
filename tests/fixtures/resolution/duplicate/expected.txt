@@ -1,0 +1,1 @@
+lua/first.lua:1:5: error: [duplicate-class] 'Clash' is declared in both lua/first.lua:1 and lua/second.lua:1

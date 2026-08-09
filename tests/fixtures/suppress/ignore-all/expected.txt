@@ -1,0 +1,1 @@
+input.lua:4:7: error: [table-decl] table 'reported' has no ---@type or ---@class; inference cannot tell a literal shape from a class

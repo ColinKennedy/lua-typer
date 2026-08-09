@@ -1,0 +1,4 @@
+input.lua:1:10: error: [vague-table] 'table' is not specific enough
+input.lua:2:8: error: [vague-function] 'function' is not specific enough
+input.lua:3:5: error: [disallowed-any] 'any' is disallowed
+input.lua:15:5: error: [disallowed-unknown] 'unknown' is disallowed

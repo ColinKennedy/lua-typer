@@ -1,0 +1,2 @@
+input.lua:1:29: error: [missing-vararg] function declares '...' but has no ---@param ... annotation
+input.lua:11:25: error: [missing-vararg] function declares '...' but has no ---@param ... annotation

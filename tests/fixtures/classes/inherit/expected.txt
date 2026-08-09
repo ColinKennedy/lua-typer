@@ -1,0 +1,1 @@
+input.lua:4:5: error: [missing-inherit] class 'Dog' inherits from 'Animal' at runtime but does not declare it

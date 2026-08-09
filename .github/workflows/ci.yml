@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lua: ["5.1", "5.2", "5.3", "5.4", "luajit"]
+    name: lua ${{ matrix.lua }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: ${{ matrix.lua }}
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      # Optional dependencies: typer must pass with and without them, so the
+      # matrix installs them and the suite runs twice.
+      - name: install optional deps
+        run: luarocks install luafilesystem && luarocks install luasocket
+
+      - name: test (with lfs + luasocket)
+        run: lua tests/run.lua
+
+      - name: test (no optional deps)
+        run: |
+          luarocks remove --force luafilesystem
+          luarocks remove --force luasocket
+          lua tests/run.lua
+
+      - name: parser corpus
+        run: lua tests/corpus.lua lua stubs tests
+
+      - name: rockspec lints
+        run: luarocks lint typer-scm-1.rockspec
+
+      - name: self-check runs clean
+        run: lua bin/typer --version

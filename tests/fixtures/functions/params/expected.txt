@@ -1,0 +1,5 @@
+input.lua:1:20: error: [missing-param] parameter 'a' has no ---@param annotation
+input.lua:1:23: error: [missing-param] parameter 'b' has no ---@param annotation
+input.lua:6:27: error: [missing-param] parameter 'b' has no ---@param annotation
+input.lua:18:27: error: [missing-param] parameter 'a' has no ---@param annotation
+input.lua:24:5: error: [param-arity-mismatch] ---@param 'extra' does not correspond to any parameter

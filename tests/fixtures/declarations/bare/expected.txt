@@ -1,0 +1,2 @@
+input.lua:1:7: error: [bare-decl] local 'foo' is declared without a value and has no ---@type
+input.lua:9:7: error: [nil-decl] local 'explicit' is initialised to nil and has no ---@type

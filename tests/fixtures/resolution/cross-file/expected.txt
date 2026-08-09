@@ -1,0 +1,1 @@
+lua/app/client.lua:8:5: error: [unresolved-type] type 'http.Missing' is not declared anywhere in the type index

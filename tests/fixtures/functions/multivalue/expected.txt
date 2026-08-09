@@ -1,0 +1,4 @@
+input.lua:1:1: error: [missing-return] function returns 2 values but declares 0 ---@return; 2 missing
+input.lua:16:9: error: [disallowed-any] 'any' is disallowed
+input.lua:17:5: error: [disallowed-any] 'any' is disallowed
+input.lua:22:1: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing

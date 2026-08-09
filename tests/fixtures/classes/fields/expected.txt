@@ -1,0 +1,2 @@
+input.lua:10:8: error: [missing-field] field 'y' is assigned on class 'Point' but has no ---@field
+input.lua:14:7: error: [missing-field] field 'origin' is assigned on class 'Point' but has no ---@field

@@ -13,7 +13,7 @@
 ---@field diagnostic typer.diagnostic
 local M = {}
 
-M.VERSION = "0.1.0"
+M.VERSION = "0.1.1"
 
 M.check = require("typer.check")
 M.config = require("typer.config")

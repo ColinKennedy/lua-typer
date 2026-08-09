@@ -5,6 +5,10 @@ local script = arg and arg[0] or "typer"
 local root = script:match("^(.*)[/\\]bin[/\\][^/\\]*$")
 if root then
     package.path = root .. "/lua/?.lua;" .. root .. "/lua/?/init.lua;" .. package.path
+    -- `stubs/` sits beside `bin/` in a checkout and in an installed rock alike,
+    -- but the rock keeps its modules in a different tree, so the library cannot
+    -- work this out for itself. See lua/typer/bundle.lua.
+    require("typer.bundle").root = root
 end
 local cli = require("typer.cli")
 os.exit(cli.main(arg or {}))

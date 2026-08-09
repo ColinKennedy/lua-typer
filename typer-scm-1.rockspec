@@ -33,6 +33,7 @@ build = {
   modules = {
     ["typer"] = "lua/typer/init.lua",
     ["typer.analyze"] = "lua/typer/analyze.lua",
+    ["typer.bundle"] = "lua/typer/bundle.lua",
     ["typer.check"] = "lua/typer/check.lua",
     ["typer.cli"] = "lua/typer/cli.lua",
     ["typer.compat"] = "lua/typer/compat.lua",
@@ -63,7 +64,9 @@ build = {
     bin = { typer = "bin/typer" },
   },
   -- The bundled stdlib stubs are data, not modules: they are read as source,
-  -- never `require`d. `copy_directories` places them beside the rock so
-  -- resolve/search.lua can find them relative to lua/typer/.
+  -- never `require`d. `copy_directories` places them beside the rock's `bin/`,
+  -- which is nowhere near the installed `lua/typer/`, so resolve/search.lua
+  -- cannot find them relative to itself -- bin/typer passes the root through
+  -- typer.bundle instead.
   copy_directories = { "stubs" },
 }

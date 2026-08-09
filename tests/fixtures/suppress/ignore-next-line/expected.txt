@@ -1,0 +1,4 @@
+input.lua:7:1: error: [missing-return] function returns 2 values but declares 0 ---@return; 2 missing
+input.lua:8:9: error: [table-decl] table 'inner' has no ---@type or ---@class; inference cannot tell a literal shape from a class
+input.lua:15:1: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+input.lua:29:11: error: [disallowed-any] 'any' is disallowed

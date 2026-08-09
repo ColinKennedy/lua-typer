@@ -133,6 +133,7 @@ Scalars are exempt — `local x = 5` has no such ambiguity.
 | `unresolved-type` | a type name declared nowhere in the index |
 | `unresolved-module` / `untyped-module` | `require` that resolves to nothing, or to a C module |
 | `duplicate-class` | the same class name declared in two files |
+| `unused-ignore` | a `-- typer: ignore` comment that silences nothing |
 
 A **class-shaped** table is one that defines `:` methods, assigns a *table* to
 `__index`, is used as a metatable, or has fields assigned on `self`.
@@ -294,16 +295,91 @@ itself.
 
 Deliberately rejected, not overlooked. A baseline file lets a project declare its
 existing defects acceptable and stop looking at them, which defeats the point.
-The only suppression is per-site and visible in the source:
+The only suppression is per-site and visible in the source. Three forms, by
+what they cover:
 
 ```lua
--- typer: ignore
--- typer: ignore missing-param, vague-table
--- typer: ignore-file
+-- typer: ignore              -- the next statement, whole
+-- typer: ignore-next-line    -- the next line of code only
+-- typer: ignore-file         -- every line in the file
+```
+
+Each narrows to a code list when given one — bracketed or bare, comma- or
+space-separated:
+
+```lua
+-- typer: ignore[disallowed-any]
+-- typer: ignore[missing-param, vague-table]
+-- typer: ignore-next-line[table-decl]
+-- typer: ignore-file[unresolved-module]
+-- typer: ignore missing-param vague-table
+```
+
+With no list, the comment silences every code. `ignore` also works trailing,
+where it covers the statement it shares a line with:
+
+```lua
+local opts = {}   -- typer: ignore[table-decl]
+```
+
+Most of what typer reports is anchored on a **tag**, not on the statement —
+`---@return any` is a `disallowed-any` at the tag's own line. So directives work
+next to tags, in either of two spellings:
+
+```lua
+---@param name string
+-- typer: ignore-next-line[disallowed-any]
+---@return any # The previous value.
+local function save_global(name) end
+
+---@class Deserialized
+---@field display string
+---@field value any The original data.  -- typer: ignore[disallowed-any]
+```
+
+Inside a doc block, `ignore-next-line` covers exactly the next annotation, and a
+directive trailing a tag covers exactly that tag's line. Neither severs the
+block: the surrounding `---` run stays intact and the statement keeps every
+annotation. (A plain `--` line that is *not* a directive does sever it, which is
+why an ordinary comment cannot be used this way.)
+
+Only a real annotation line is scanned for a trailing directive, so a `---`
+description that merely mentions `-- typer: ignore` stays documentation.
+
+A directive above the whole block works too, and reaches down over the block it
+skipped:
+
+```lua
+-- typer: ignore[disallowed-any]
+---@param opts table<string, integer>
+---@return any
+local function loose(opts) end
 ```
 
 Plain comments, not doc comments — a `---@typer-ignore` tag would show up as an
 unknown tag to lua-language-server itself.
+
+### Suppressions go stale, and typer says so
+
+An ignore that silences nothing is reported as `unused-ignore`, at the comment,
+with the advice to delete it:
+
+```
+lua/app/client.lua:12:1: error: [unused-ignore] `-- typer: ignore` suppresses nothing: no 'vague-table' diagnostic here
+```
+
+A misspelling is caught the same way, since a code typer does not know can never
+match anything:
+
+```
+lua/app/client.lua:31:1: error: [unused-ignore] `-- typer: ignore` suppresses nothing: 'table-declaration' is not a typer diagnostic code
+```
+
+This is what keeps the escape hatch from becoming the baseline file above.
+Nothing else prunes it: a suppression written for a defect that has since been
+fixed is invisible until something goes looking, and then it is indistinguishable
+from one that is still load-bearing. `unused-ignore` is on by default, and the
+answer to one is to remove the comment.
 
 `overrides` and `fail_on` below are **not** baselines. They name paths and
 severities, never individual defects, so nothing goes stale and nothing is

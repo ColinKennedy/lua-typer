@@ -456,9 +456,11 @@ function M.run(paths, options)
     end
 
     -- 4. Rules, on checked files only.
+    ---@type table<string, typer.Suppressions>
+    local suppressions_by_file = {}
+
     for _, model in ipairs(checked_models) do
         if not model.is_meta then
-            local before = #run.diagnostics
             ---@type typer.RuleContext
             local context = {
                 config = config,
@@ -471,26 +473,49 @@ function M.run(paths, options)
                 run_rule(model, context)
             end
 
-            -- Suppression applies only to this file's own diagnostics.
-            local suppressions = suppress.collect(model.chunk, model)
-            if not options.no_suppress then
-                ---@type typer.Diagnostic[]
-                local kept = {}
-                for index = 1, before do
-                    kept[#kept + 1] = run.diagnostics[index]
-                end
-                for index = before + 1, #run.diagnostics do
-                    local diag = run.diagnostics[index]
+            suppressions_by_file[model.path] = suppress.collect(model.chunk, model)
+        end
+    end
+
+    -- 5. Suppression, over every diagnostic reported against a checked file --
+    -- not just the ones its rules produced. `unresolved-module` and
+    -- `duplicate-class` are raised while the index is being built, long before
+    -- the file's own rules run, and a `-- typer: ignore` has to reach them too.
+    if not options.no_suppress then
+        ---@type typer.Diagnostic[]
+        local kept = {}
+        for _, diag in ipairs(run.diagnostics) do
+            local suppressions = suppressions_by_file[diag.file]
+            if not (suppressions and suppress.is_suppressed(suppressions, diag)) then
+                kept[#kept + 1] = diag
+            end
+        end
+
+        -- Which directives went unused is only knowable once every diagnostic
+        -- above has had its chance to match one.
+        --
+        -- These are suppressible in turn -- `-- typer: ignore-file` reaches
+        -- them, as does turning `unused-ignore` off for a path -- but they are
+        -- not fed back into the used/unused tally, which would only chase its
+        -- own tail. Line-scoped directives cannot reach them at all: an
+        -- `unused-ignore` is anchored on a comment, and both `ignore` and
+        -- `ignore-next-line` aim at the next *code* below them. That is the
+        -- intended shape. The answer to a dead suppression is to delete it.
+        for _, model in ipairs(checked_models) do
+            local suppressions = suppressions_by_file[model.path]
+            if suppressions then
+                for _, diag in ipairs(suppress.unused(suppressions, model.path)) do
                     if not suppress.is_suppressed(suppressions, diag) then
                         kept[#kept + 1] = diag
                     end
                 end
-                run.diagnostics = kept
             end
         end
+
+        run.diagnostics = kept
     end
 
-    -- 5. Severity overrides, dropping anything switched off.
+    -- 6. Severity overrides, dropping anything switched off.
     ---@type typer.Diagnostic[]
     local final = {}
     local errors, warnings, hints = 0, 0, 0

@@ -48,6 +48,10 @@ M.DEFAULT_SEVERITY = {
     -- tool
     ["parse-error"] = "error",
     ["annotation-syntax"] = "error",
+    -- A `-- typer: ignore` that silences nothing. On by default and deliberately
+    -- so: the suppression comments are the *whole* escape hatch (spec §5), and an
+    -- escape hatch nobody prunes is the baseline file this tool refuses to have.
+    ["unused-ignore"] = "error",
 }
 
 --- Anything positional enough to hang a diagnostic on: an AST node, a token, a
@@ -75,6 +79,7 @@ M.DEFAULT_SEVERITY = {
 ---| typer.GlobalRead
 ---| typer.RequireSite
 ---| typer.TypeDecl
+---| typer.SuppressDirective
 
 ---@class typer.Diagnostic
 ---@field file string

@@ -7,6 +7,7 @@
 local M = {}
 
 local tags_parser = require("typer.annot.tags")
+local suppress = require("typer.suppress")
 
 ---@class typer.DocBlock
 ---@field comments typer.Comment[]
@@ -85,7 +86,17 @@ function M.build(chunk)
         elseif not comment.doc then
             -- A plain `--` comment breaks a doc run only if it sits between lines.
             if current and current.el == comment.l - 1 and not code_lines[comment.l] then
-                current = nil
+                if suppress.is_directive(comment) then
+                    -- A `-- typer:` directive is part of the block's apparatus,
+                    -- not prose separating two blocks. Absorb its line -- the
+                    -- run continues across it, and the comment itself carries
+                    -- no tags -- so that a directive written beside the tag it
+                    -- silences does not cost the statement the annotations
+                    -- above it.
+                    current.el = comment.l
+                else
+                    current = nil
+                end
             end
         end
     end

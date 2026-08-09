@@ -1,0 +1,5 @@
+input.lua:2:1: error: [unused-ignore] `-- typer: ignore` suppresses nothing
+input.lua:7:1: error: [unused-ignore] `-- typer: ignore` suppresses nothing: no 'vague-table' diagnostic here
+input.lua:8:7: error: [table-decl] table 'wrong' has no ---@type or ---@class; inference cannot tell a literal shape from a class
+input.lua:11:1: error: [unused-ignore] `-- typer: ignore` suppresses nothing: 'table-declaration' is not a typer diagnostic code
+input.lua:16:1: error: [unused-ignore] `-- typer: ignore` suppresses nothing: no 'missing-param' diagnostic here

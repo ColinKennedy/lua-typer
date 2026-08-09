@@ -30,17 +30,29 @@ local TYPED_TAGS = {
 
 ---@param code string
 ---@param rendered string
+---@param tag_kind string   -- the tag the type was written on
 ---@return string message
 ---@return string|nil suggestion
-local function message_for(code, rendered)
+local function message_for(code, rendered, tag_kind)
     if code == "vague-table" then
         return "'table' is not specific enough", "use table<K, V>, T[], an inline shape { a: string }, or a ---@class"
     elseif code == "vague-function" then
         return "'function' is not specific enough", "use a fun(a: T): R signature"
-    elseif code == "disallowed-any" then
-        return "'any' is disallowed", "if this is a pass-through, use ---@generic T and type this as T"
-    elseif code == "disallowed-unknown" then
-        return "'unknown' is disallowed", "if this is a pass-through, use ---@generic T and type this as T"
+    elseif code == "disallowed-any" or code == "disallowed-unknown" then
+        local name = code == "disallowed-any" and "any" or "unknown"
+        -- LuaLS has no generics over a class field, so the standard advice is
+        -- not available here: there is no `---@generic` to reach for on a
+        -- `---@field`. For a genuinely heterogeneous container -- a selector
+        -- keyed by caller-supplied values, say -- `any` is the honest type, and
+        -- suppressing the site beats writing a narrower type that is a lie.
+        if tag_kind == "field" then
+            return ("'%s' is disallowed"):format(name),
+                (
+                    "---@generic is not available on a ---@field; if the value really is arbitrary, "
+                    .. "use `-- typer: ignore %s`"
+                ):format(code)
+        end
+        return ("'%s' is disallowed"):format(name), "if this is a pass-through, use ---@generic T and type this as T"
     end
     return rendered, nil
 end
@@ -69,7 +81,8 @@ end
 ---@param ctx typer.RuleContext
 ---@param node typer.TypeNode
 ---@param scope table<string, boolean>
-local function check_node(model, ctx, node, scope)
+---@param tag_kind string
+local function check_node(model, ctx, node, scope, tag_kind)
     if node.k ~= "name" then
         return
     end
@@ -85,7 +98,7 @@ local function check_node(model, ctx, node, scope)
         if name == "table" and node.args and #node.args >= 1 then
             return
         end
-        local message, suggestion = message_for(vague_code, name)
+        local message, suggestion = message_for(vague_code, name, tag_kind)
         ctx.emit(diagnostic.new(model.path, node, vague_code, message, suggestion))
         return
     end
@@ -162,7 +175,7 @@ function M.run(model, ctx)
 
                 for _, root in ipairs(checked) do
                     types.walk(root, function(node)
-                        check_node(model, ctx, node, scope)
+                        check_node(model, ctx, node, scope, tag.kind)
                     end)
                 end
             end
@@ -170,7 +183,7 @@ function M.run(model, ctx)
             if tag.kind == "class" then
                 for _, parent in ipairs(tag.parents or {}) do
                     types.walk(parent, function(node)
-                        check_node(model, ctx, node, scope)
+                        check_node(model, ctx, node, scope, tag.kind)
                     end)
                 end
             end

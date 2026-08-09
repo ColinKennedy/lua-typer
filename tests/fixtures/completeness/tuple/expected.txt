@@ -1,2 +1,1 @@
 input.lua:7:19: error: [unresolved-type] type 'Missing' is not declared anywhere in the type index
-input.lua:11:10: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing

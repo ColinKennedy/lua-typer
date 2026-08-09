@@ -1,0 +1,5 @@
+input.lua:3:7: error: [namespace-decl] table 'M' is a function namespace with no ---@type or ---@class
+input.lua:6:7: error: [namespace-decl] table '_P' is a function namespace with no ---@type or ---@class
+input.lua:19:7: error: [table-decl] table 'state' has no ---@type or ---@class; inference cannot tell a literal shape from a class
+input.lua:23:7: error: [table-decl] table 'opaque' has no ---@type or ---@class; inference cannot tell a literal shape from a class
+input.lua:27:7: error: [table-decl] table 'mixed' has no ---@type or ---@class; inference cannot tell a literal shape from a class

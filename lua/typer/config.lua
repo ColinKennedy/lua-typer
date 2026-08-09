@@ -7,7 +7,19 @@ local fs = require("typer.fs")
 local json = require("typer.json")
 local diagnostic = require("typer.diagnostic")
 
+--- A per-path severity block (spec §9).
+---
+--- Not a baseline (§5): it names *paths*, not defects, so nothing is recorded as
+--- known-bad and nothing goes stale. It is how a project holds its library code
+--- to a higher standard than its tests, which is what most projects want and
+--- what a single global `--severity` cannot express.
+---@class typer.Override
+---@field paths string[]
+---@field severity table<string, string>   -- code -> level; `*` matches any code
+---@field path_patterns string[]           -- `paths`, compiled once at load
+
 ---@class typer.Config
+---@field overrides typer.Override[]
 ---@field source_roots string[]
 ---@field stub_paths string[]
 ---@field lua_path string[]
@@ -16,6 +28,7 @@ local diagnostic = require("typer.diagnostic")
 ---@field ignore_missing string[]
 ---@field exclude string[]
 ---@field severity table<string, string>
+---@field fail_on "error"|"warning"|"hint"   -- lowest severity that exits 1
 ---@field require_scalar_types boolean
 ---@field strict_globals boolean
 ---@field require_method_fields boolean
@@ -43,6 +56,8 @@ function M.defaults()
         ignore_missing = {},
         exclude = {},
         severity = {},
+        overrides = {},
+        fail_on = "hint",
         require_scalar_types = false,
         strict_globals = true,
         require_method_fields = false,
@@ -217,6 +232,19 @@ function M.load(explicit_path, cwd)
         config.exclude_patterns[#config.exclude_patterns + 1] = glob_to_pattern(glob)
     end
 
+    config.overrides = config.overrides or {}
+    for _, override in ipairs(config.overrides) do
+        override.severity = override.severity or {}
+        override.path_patterns = {}
+        local paths = override.paths
+        if type(paths) == "string" then
+            paths = { paths }
+        end
+        for _, glob in ipairs(paths or {}) do
+            override.path_patterns[#override.path_patterns + 1] = glob_to_pattern(glob)
+        end
+    end
+
     return config, nil
 end
 
@@ -245,14 +273,35 @@ function M.ignores_module(config, module)
     return false
 end
 
---- Effective severity for a code, after config overrides.
+--- Effective severity for a code at a path, after config overrides.
+---
+--- Precedence, most specific first: a per-path block, then the global
+--- `severity` table, then the code's default. Among per-path blocks the *last*
+--- match wins, so a later, narrower entry can carve an exception out of a
+--- broader one above it.
 ---@param config typer.Config
 ---@param code string
+---@param path string|nil   -- relative to the config root; nil skips path rules
 ---@return string
-function M.severity_of(config, code)
-    local override = config.severity and config.severity[code]
-    if override then
-        return override
+function M.severity_of(config, code, path)
+    if path then
+        for index = #(config.overrides or {}), 1, -1 do
+            local override = config.overrides[index]
+            for _, pattern in ipairs(override.path_patterns or {}) do
+                if path:match(pattern) then
+                    local level = override.severity[code] or override.severity["*"]
+                    if level then
+                        return level
+                    end
+                    break
+                end
+            end
+        end
+    end
+
+    local global = config.severity and config.severity[code]
+    if global then
+        return global
     end
     return diagnostic.DEFAULT_SEVERITY[code] or "error"
 end

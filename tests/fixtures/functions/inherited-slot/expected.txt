@@ -1,0 +1,7 @@
+input.lua:40:1: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+input.lua:40:17: error: [missing-param] parameter 'value' has no ---@param annotation
+input.lua:44:10: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+input.lua:44:19: error: [missing-param] parameter 'value' has no ---@param annotation
+input.lua:69:10: error: [return-arity-mismatch] function returns 2 values but the enclosing ---@return at line 65 declares 1
+input.lua:79:13: error: [missing-return] function returns 2 values but declares 0 ---@return; 2 missing
+input.lua:79:29: error: [missing-param] parameter 'second' has no ---@param annotation

@@ -9,6 +9,27 @@ local M = {}
 
 local docblock = require("typer.docblock")
 
+--- What an already-declared function slot says about itself.
+---
+--- Deliberately thin. typer does not type-check (spec §2), so this carries only
+--- what the rules can act on: that the slot *is* declared -- which is what makes
+--- a function assigned into it an override rather than a declaration -- and its
+--- return arity, the one part a re-assignment can still contradict.
+---@class typer.FuncDecl
+---@field returns integer            -- declared ---@return count
+---@field indeterminate boolean|nil  -- an ---@overload widens it; arity unknown
+
+--- The declaration a function expression inherits instead of writing its own.
+---
+--- `decl` is filled in when the declaring site is in this same file. `key` is
+--- for the sites that are not -- a required module's export, a global-rooted
+--- name like `vim.notify` -- and is resolved against the project-wide index once
+--- every file has been read. See `rules/functions.lua`.
+---@class typer.Inherited
+---@field decl typer.FuncDecl|nil
+---@field key string|nil
+---@field origin string             -- where the declaration lives, for the message
+
 --- A field or method discovered on a class, with the position to report at.
 ---@class typer.FieldEntry
 ---@field name string
@@ -18,6 +39,7 @@ local docblock = require("typer.docblock")
 ---@field is_function boolean
 ---@field annotated boolean|nil       -- carries its own `---@type`
 ---@field in_constructor boolean|nil
+---@field decl typer.FuncDecl|nil     -- the signature it was declared with
 
 ---@class typer.Binding
 ---@field name string
@@ -39,6 +61,7 @@ local docblock = require("typer.docblock")
 ---@field index integer|nil                   -- position in a multi-name local
 ---@field explicit_nil boolean|nil
 ---@field inherits typer.Node|nil             -- detected base expression
+---@field param_tag typer.Tag|nil             -- the `---@param` that typed it
 ---@field module string|nil                   -- for `require` bindings
 ---@field late_table boolean|nil              -- assigned a table after declaration
 ---@field reassigned boolean|nil              -- a global written more than once
@@ -57,6 +80,7 @@ local docblock = require("typer.docblock")
 ---@field owner typer.Binding|nil      -- class the method belongs to
 ---@field exempt boolean               -- inline expression, typed by context
 ---@field indeterminate_arity boolean|nil  -- returns a call, so arity is unknown
+---@field inherited typer.Inherited|nil -- the slot it overrides already has a type
 
 --- The line range of one statement, so `-- typer: ignore` can cover a whole
 --- multi-line statement rather than just its first line.
@@ -92,7 +116,8 @@ local docblock = require("typer.docblock")
 ---@field statements typer.StatementSpan[]
 ---@field role string|nil
 ---@field source string|nil
----@field module_returns typer.Binding|nil  -- the binding this module returns
+---@field module_export typer.Binding|nil   -- the table this module returns
+---@field qualified table<string, typer.FuncDecl>  -- global-rooted `a.b.c` signatures
 ---@field declared_globals table<string, typer.GlobalDecl>|nil
 
 ---@class typer.Walker
@@ -100,6 +125,8 @@ local docblock = require("typer.docblock")
 ---@field scopes table<string, typer.Binding>[]
 ---@field fn_stack typer.FuncInfo[]
 ---@field pending_name string|nil     -- name the current expression is bound to
+---@field pending_target typer.Node|nil    -- assignment target being written to
+---@field pending_inherited typer.Inherited|nil  -- signature the slot already has
 
 ---@param walker typer.Walker
 local function push_scope(walker)
@@ -223,6 +250,21 @@ local function attach_tags(binding, tags)
     end
 end
 
+--- True when an `__index` value means inheritance rather than computed lookup.
+---
+--- `__index` says "look here on a miss", and the two things it can be answer
+--- very different questions. A *table* is inheritance: instances fall back to a
+--- base, which is the OOP pattern `missing-class` and `missing-inherit` exist to
+--- catch. A *function* is a computed-lookup metamethod: it makes the table a
+--- proxy over values generated on demand, which has no fields to declare and is
+--- not a class. `setmetatable(output, { __index = function() ... end })` is a
+--- lazy list, and `---@type string[]` describes it completely.
+---@param value typer.Node|nil
+---@return boolean
+local function is_inheritance_index(value)
+    return value ~= nil and value.k ~= "Function"
+end
+
 ---@param binding typer.Binding
 ---@param signal string
 ---@param node typer.Node
@@ -243,6 +285,174 @@ local function root_name(node)
         return node
     end
     return nil
+end
+
+--- The `fun(...)` at the root of a type expression, when there is one.
+---@param node typer.TypeNode|nil
+---@return typer.TypeNode|nil
+local function fun_type(node)
+    while node and (node.k == "optional" or node.k == "paren") do
+        node = node.of
+    end
+    if node and node.k == "fun" then
+        return node
+    end
+    return nil
+end
+
+--- The signature a doc block declares for the function below it, or nil when it
+--- declares none.
+---
+--- The bar is that the block says *something* about the function -- a `---@type
+--- fun(...)`, or at least one `---@param` / `---@return` / `---@overload`. That
+--- is what makes the slot "already typed", and so what makes a later assignment
+--- into it an override rather than a fresh declaration.
+---@param tags typer.Tag[]
+---@return typer.FuncDecl|nil
+local function declared_signature(tags)
+    local returns, described, overloaded = 0, false, false
+
+    for _, tag in ipairs(tags) do
+        if tag.kind == "type" then
+            local fn = fun_type(tag.type)
+            if fn then
+                return { returns = #fn.returns }
+            end
+        elseif tag.kind == "return" then
+            returns = returns + 1
+            described = true
+        elseif tag.kind == "param" or tag.kind == "vararg" then
+            described = true
+        elseif tag.kind == "overload" then
+            -- An overload set has as many arities as it has lines; the count
+            -- below stops meaning anything.
+            overloaded = true
+            described = true
+        end
+    end
+
+    if not described then
+        return nil
+    end
+    return { returns = returns, indeterminate = overloaded or nil }
+end
+
+--- True when a dotted path came out of `describe` intact, with no computed
+--- index standing in for a key we cannot name.
+---@param dotted string
+---@return boolean
+local function is_plain_path(dotted)
+    return not dotted:find("[", 1, true) and not dotted:find("?", 1, true)
+end
+
+--- The declaration a function expression assigned to `target` would override.
+---
+--- Spec §1 says anything inline inherits its type from context. Being
+--- syntactically inline is not what makes that true -- the slot already having a
+--- declared type is. `vim.notify = function(message, level, ...)` re-binds a name
+--- whose signature is stated in full in the runtime meta, and a `---@param`
+--- written here is duplication typer cannot check and drift it cannot catch.
+---
+--- Four ways a slot arrives already typed, cheapest question first: a local or
+--- parameter carrying a function type, a field defined earlier in this file, a
+--- field of a module this file `require`s, and a global-rooted dotted name
+--- declared anywhere in the index. The last two cannot be answered until every
+--- file has been read, so they come back as a key for the rules to resolve.
+---@param walker typer.Walker
+---@param target typer.Node
+---@return typer.Inherited|nil
+local function inherited_slot(walker, target)
+    if target.k == "Name" then
+        local binding = lookup(walker, target.name) or walker.model.globals[target.name]
+        local tag = binding and (binding.type_tag or binding.param_tag) or nil
+        if not tag then
+            return nil
+        end
+        local fn = fun_type(tag.type)
+        if not fn then
+            return nil
+        end
+        return {
+            decl = { returns = #fn.returns },
+            origin = ("'%s', typed at line %d"):format(target.name, tag.l),
+        }
+    end
+
+    if target.k ~= "Index" or target.computed then
+        return nil
+    end
+
+    local owner = resolve(walker, target.obj)
+    if owner then
+        -- Defined earlier in this same file, so the answer is already in hand.
+        local entry = owner.methods[target.name]
+        if entry and entry.decl then
+            return {
+                decl = entry.decl,
+                origin = ("'%s.%s', declared at line %d"):format(owner.name, target.name, entry.l),
+            }
+        end
+        -- A field of a module this file requires. Which file that is depends on
+        -- the search path, so the lookup waits.
+        if owner.module then
+            return {
+                key = "require:" .. owner.module .. ":" .. target.name,
+                origin = ("'%s' in module '%s'"):format(target.name, owner.module),
+            }
+        end
+        return nil
+    end
+
+    -- Rooted at a global: `vim.notify`, `vim.fn.jobstart`. The name is the same
+    -- everywhere, so it is looked up in the project-wide index by that name.
+    local root = root_name(target)
+    local dotted = describe(target)
+    if root and not lookup(walker, root.name) and is_plain_path(dotted) then
+        return { key = "global:" .. dotted, origin = ("'%s'"):format(dotted) }
+    end
+
+    return nil
+end
+
+--- True when the expression drops a function literal straight into the slot
+--- being assigned -- as itself, or through `x = x or function() end`, which is
+--- how Lua spells a default. A fallback lands in the same slot as the value it
+--- stands in for, so it is typed by the same annotation.
+---@param node typer.Node|nil
+---@return boolean
+local function fills_slot_with_function(node)
+    if not node then
+        return false
+    end
+    if node.k == "Function" then
+        return true
+    end
+    return node.k == "BinOp" and node.op == "or" and fills_slot_with_function(node.right)
+end
+
+--- Records a global-rooted function definition under its dotted name, so a file
+--- that later re-binds it can find the signature it is overriding.
+---
+--- Only global roots are indexed. A module-local `M.f` would collide with every
+--- other file's `M.f`, and those go through the module's own export table
+--- instead.
+---@param walker typer.Walker
+---@param target typer.Node
+---@param decl typer.FuncDecl|nil
+local function record_qualified(walker, target, decl)
+    if not decl or target.k ~= "Index" or target.computed then
+        return
+    end
+
+    local root = root_name(target)
+    if not root or lookup(walker, root.name) then
+        return
+    end
+
+    local dotted = describe(target)
+    if is_plain_path(dotted) and not walker.model.qualified[dotted] then
+        walker.model.qualified[dotted] = decl
+    end
 end
 
 --- In a `---@meta` file, `X.field = ...` asserts that the global `X` exists.
@@ -318,11 +528,25 @@ local function enter_function(walker, node, tags, display, anchor, owner, exempt
         has_nil_return = false,
         owner = owner,
         exempt = exempt or false,
+        -- Claimed, not read: a nested function inside this body must not pick up
+        -- the slot this one was assigned into.
+        inherited = walker.pending_inherited,
     }
+    walker.pending_inherited = nil
     walker.model.functions[#walker.model.functions + 1] = info
 
     walker.fn_stack[#walker.fn_stack + 1] = info
     push_scope(walker)
+
+    -- A parameter typed `---@param cb fun(...)` is a slot like any other: the
+    -- `cb = cb or function() end` default assigned into it inherits that type.
+    ---@type table<string, typer.Tag>
+    local param_tags = {}
+    for _, tag in ipairs(tags or {}) do
+        if tag.kind == "param" and tag.name then
+            param_tags[tag.name] = tag
+        end
+    end
 
     for _, param in ipairs(node.params) do
         declare(walker, param.name, {
@@ -336,6 +560,7 @@ local function enter_function(walker, node, tags, display, anchor, owner, exempt
             fields = {},
             methods = {},
             tags = {},
+            param_tag = param_tags[param.name],
             is_self = param.name == "self" and node.is_method or nil,
             class_owner = param.name == "self" and owner or nil,
         })
@@ -416,7 +641,7 @@ walk_expr = function(walker, node, position, tags)
                     for _, field in ipairs(second.fields) do
                         if field.kind == "named" and field.name == "__index" then
                             local base = resolve(walker, field.value)
-                            if base ~= target then
+                            if base ~= target and is_inheritance_index(field.value) then
                                 target.inherits = field.value
                                 add_signal(target, "index", node)
                             end
@@ -508,18 +733,22 @@ local function record_field_assignment(walker, target, value, tags)
         ec = target.key_ec or target.ec,
         is_function = value ~= nil and value.k == "Function",
         annotated = annotated,
+        decl = value ~= nil and value.k == "Function" and declared_signature(tags or {}) or nil,
     }
 
     if field_name == "__index" then
-        local base = resolve(walker, value)
-        if base ~= owner then
-            owner.inherits = value
+        if is_inheritance_index(value) then
+            local base = resolve(walker, value)
+            if base ~= owner then
+                owner.inherits = value
+            end
+            add_signal(owner, "index", target)
         end
-        add_signal(owner, "index", target)
         return
     end
 
     if entry.is_function then
+        record_qualified(walker, target, entry.decl)
         owner.methods[field_name] = entry
     else
         owner.fields[field_name] = entry
@@ -647,6 +876,8 @@ walk_stat = function(walker, node)
         local owner = nil
         if target.k == "Index" and not target.computed then
             declare_meta_global(walker, target)
+            local decl = declared_signature(tags)
+            record_qualified(walker, target, decl)
             owner = resolve(walker, target.obj)
             if owner then
                 if node.is_method then
@@ -658,6 +889,7 @@ walk_stat = function(walker, node)
                     c = target.key_c or target.c,
                     ec = target.key_ec or target.ec,
                     is_function = true,
+                    decl = decl,
                 }
             end
             walk_expr(walker, target.obj)
@@ -692,7 +924,13 @@ walk_stat = function(walker, node)
         for index, expr in ipairs(node.exprs) do
             local target = node.targets[index]
             walker.pending_name = target and describe(target) or nil
+            -- Only when a function literal actually lands in the slot: anything
+            -- else would leak it into an unrelated nested closure.
+            if target and fills_slot_with_function(expr) then
+                walker.pending_inherited = inherited_slot(walker, target)
+            end
             walk_expr(walker, expr, "named", tags)
+            walker.pending_inherited = nil
         end
         walker.pending_name = nil
 
@@ -788,17 +1026,41 @@ walk_stat = function(walker, node)
                         current.has_nil_return = true
                     end
                 end
-            else
-                model.module_returns = model.module_returns or {}
-                model.module_returns[#model.module_returns + 1] = node
+            elseif not model.module_export then
+                -- `return M` at the top of the file: the table this module hands
+                -- out. Its functions are the module's public signatures, which is
+                -- what another file's `mod.f = function() end` overrides.
+                model.module_export = resolve(walker, exprs[1])
             end
         end
 
         local return_tags = docblock.tags_for(model.docs, node)
-        for _, expr in ipairs(exprs or {}) do
+        local own = declared_signature(return_tags) ~= nil
+        local declared_returns = current and docblock.find_all(current.tags, "return") or {}
+
+        for index, expr in ipairs(exprs or {}) do
             -- A returned function literal is named by its return position and takes
             -- the doc block sitting above the `return`.
-            walk_expr(walker, expr, expr.k == "Function" and "named" or "inline", return_tags)
+            if expr.k == "Function" then
+                -- When there is no such block, the name it was given is the
+                -- enclosing `---@return`. `---@return fun(): string` declares this
+                -- closure as surely as a `---@type` would, so it does not declare
+                -- itself a second time -- but the arity it now claims is a claim
+                -- that can be wrong, and that is left to check.
+                if not own then
+                    local fn = declared_returns[index] and fun_type(declared_returns[index].type) or nil
+                    if fn then
+                        walker.pending_inherited = {
+                            decl = { returns = #fn.returns },
+                            origin = ("the enclosing ---@return at line %d"):format(declared_returns[index].l),
+                        }
+                    end
+                end
+                walk_expr(walker, expr, "named", return_tags)
+                walker.pending_inherited = nil
+            else
+                walk_expr(walker, expr, "inline", return_tags)
+            end
         end
     elseif kind == "CallStat" then
         walk_expr(walker, node.expr)
@@ -881,6 +1143,23 @@ walk_block = function(walker, block)
     end
 end
 
+--- Tags that put a name into the ambient type index (spec §8.2).
+---@type table<string, boolean>
+local AMBIENT_TAGS = { class = true, alias = true, enum = true }
+
+--- True when a doc block declares a type name, and so must be indexed whatever
+--- statement it was bound to.
+---@param tags typer.Tag[]
+---@return boolean
+local function declares_ambient_type(tags)
+    for _, tag in ipairs(tags) do
+        if AMBIENT_TAGS[tag.kind] and tag.name then
+            return true
+        end
+    end
+    return false
+end
+
 --- Signals that make a table class-shaped, in the order that reads best in a
 --- message.
 ---@type string[]
@@ -893,6 +1172,29 @@ local CLASS_SIGNAL_REASON = {
     ["metatable"] = "is used as a metatable",
     ["self-assign"] = "assigns fields on 'self'",
 }
+
+--- True when every member of a table is a function, and there is at least one.
+---
+--- This is the module preamble -- `local M = {}` / `local _P = {}` with
+--- `function M.f() end` below it -- and §1's question, literal or class, has no
+--- answer to give about it. A namespace has no data whose shape a reader needs;
+--- every member is a function that annotates itself. What an annotation would
+--- add is a *nameable* type, which is worth having only if someone writes the
+--- name, and in practice nobody does: in typer's own source, 19 of 26 module
+--- class names appear in no type position anywhere.
+---
+--- So this is split out of `table-decl` as `namespace-decl` rather than folded
+--- into it, and ships `off`. A project that does want its modules named turns it
+--- back on in one line -- typer's own `.typer.lua` does -- and the tables that
+--- really are opaque still report under `table-decl`.
+---@param binding typer.Binding
+---@return boolean
+function M.is_namespace(binding)
+    if next(binding.fields) ~= nil then
+        return false
+    end
+    return next(binding.methods) ~= nil
+end
 
 --- The reason a binding looks like a class, or nil when it does not. Shared with
 --- the class rules so `table-decl` can stand down when the more specific
@@ -928,6 +1230,7 @@ function M.run(path, chunk)
         requires = {},
         decl_tags = {},
         statements = {},
+        qualified = {},
     }
 
     ---@type typer.Walker
@@ -938,8 +1241,16 @@ function M.run(path, chunk)
 
     -- Doc blocks not claimed by any statement still declare ambient types: a file
     -- may consist of nothing but `---@class` comments (spec §8.2).
+    --
+    -- A *claimed* block normally reaches the index through the binding or the
+    -- function it annotates -- but a statement that produces neither drops it on
+    -- the floor, and `M.Field = {}` is exactly that statement. The name in a
+    -- `---@class` / `---@alias` / `---@enum` is self-contained: nothing about it
+    -- depends on whether a local, a field assignment, or no code at all sits
+    -- below. So the block is indexed from itself whatever it was bound to, and
+    -- folding the same run in twice is a no-op (registry.insert is idempotent).
     for _, block in ipairs(docs.blocks) do
-        if not block.consumed and #block.tags > 0 then
+        if #block.tags > 0 and (not block.consumed or declares_ambient_type(block.tags)) then
             model.decl_tags[#model.decl_tags + 1] = block.tags
         end
     end

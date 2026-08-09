@@ -47,15 +47,65 @@ local M = {}
 ---@field modules table<string, string>   -- module name -> declaring file
 ---@field generic_hints table<string, boolean>|nil
 ---@field indexed table<string, boolean>  -- files already folded in
+---@field seen_decls table<string, boolean>  -- declaration sites already folded in
+--- Declared function signatures, for telling an override from a declaration.
+--- `qualified` is keyed by global-rooted dotted name (`vim.notify`); `exports`
+--- by declaring file, then by the field name on the table that file returns.
+---@field qualified table<string, typer.FuncDecl>
+---@field exports table<string, table<string, typer.FuncDecl>>
 
 ---@return typer.Registry
 function M.new()
-    return { decls = {}, duplicates = {}, globals = {}, modules = {}, indexed = {} }
+    return {
+        decls = {},
+        duplicates = {},
+        globals = {},
+        modules = {},
+        indexed = {},
+        seen_decls = {},
+        qualified = {},
+        exports = {},
+    }
+end
+
+--- Records which file a module name resolved to, so a `mod.f = function() end`
+--- can be traced back to the signature it overrides.
+---@param registry typer.Registry
+---@param module string
+---@param file string
+function M.bind_module(registry, module, file)
+    if not registry.modules[module] then
+        registry.modules[module] = file
+    end
+end
+
+--- The declared signature of `field` on the table that `module` returns, or nil
+--- when the module is unresolved, exports no such function, or declares it
+--- without annotations.
+---@param registry typer.Registry
+---@param module string
+---@param field string
+---@return typer.FuncDecl|nil
+function M.module_export(registry, module, field)
+    local file = registry.modules[module]
+    local exports = file and registry.exports[file] or nil
+    return exports and exports[field] or nil
 end
 
 ---@param registry typer.Registry
 ---@param decl typer.TypeDecl
 local function insert(registry, decl)
+    -- Idempotent per declaration *site*, not just per file. A doc block reaches
+    -- the index by more than one route -- through the binding it annotates and
+    -- through the block itself -- and folding the same `---@class` in twice used
+    -- to conflict it against the one already there, reporting `duplicate-class`
+    -- once per route.
+    local site = decl.name .. "\0" .. decl.file .. "\0" .. decl.l
+    if registry.seen_decls[site] then
+        return
+    end
+    registry.seen_decls[site] = true
+
     local existing = registry.decls[decl.name]
     if existing then
         -- Stub files intentionally outrank real source, so a stub replacing a
@@ -158,6 +208,8 @@ end
 ---@field tag_runs typer.Tag[][]
 ---@field globals typer.GlobalDecl[]
 ---@field is_meta boolean
+---@field qualified table<string, typer.FuncDecl>   -- global-rooted `a.b.c`
+---@field exports table<string, typer.FuncDecl>     -- fields of the returned table
 
 --- Reduces an analysed file to its index slice.
 ---@param model typer.FileModel
@@ -203,7 +255,23 @@ function M.slice_of(model)
         end
     end
 
-    return { tag_runs = tag_runs, globals = globals, is_meta = model.is_meta }
+    ---@type table<string, typer.FuncDecl>
+    local exports = {}
+    if model.module_export then
+        for name, entry in pairs(model.module_export.methods) do
+            if entry.decl then
+                exports[name] = entry.decl
+            end
+        end
+    end
+
+    return {
+        tag_runs = tag_runs,
+        globals = globals,
+        is_meta = model.is_meta,
+        qualified = model.qualified,
+        exports = exports,
+    }
 end
 
 --- Folds a slice into the registry. A slice read back from the cache and one
@@ -231,6 +299,19 @@ function M.index_slice(registry, file, slice, opts)
 
     for _, entry in ipairs(slice.globals) do
         registry.globals[entry.name] = entry
+    end
+
+    -- First declaration wins. The workspace and the stubs are folded in before
+    -- the files being checked, so a spec that overrides `vim.notify` can never
+    -- register its own stub as the declaration it is overriding.
+    for name, decl in pairs(slice.qualified or {}) do
+        if not registry.qualified[name] then
+            registry.qualified[name] = decl
+        end
+    end
+
+    if next(slice.exports or {}) ~= nil then
+        registry.exports[file] = slice.exports
     end
 end
 

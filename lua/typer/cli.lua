@@ -20,6 +20,8 @@ usage: typer [options] <path>...
   --json                      JSON output instead of vimgrep
   --config <file>             default: .typer.lua / .typer.json, searched upward
   --severity <code>=<level>   override a code's severity (error|warning|hint|off)
+  --fail-on <level>           exit 1 only at or above this severity
+                              (error|warning|hint; default hint, i.e. anything)
   --no-suppress               ignore `-- typer: ignore` comments
   --stdin-filename <path>     read source from stdin, report as <path>
 
@@ -41,6 +43,7 @@ typer daemon check <path>...
 ---@field json boolean
 ---@field config string|nil
 ---@field severity table<string, string>
+---@field fail_on string|nil
 ---@field no_suppress boolean
 ---@field stdin_filename string|nil
 ---@field lua_version string|nil
@@ -134,6 +137,13 @@ local function parse_args(argv)
                 return nil, "--severity expects <code>=<level>"
             end
             args.severity[code] = level
+        elseif item == "--fail-on" then
+            index = index + 1
+            args.fail_on = argv[index]
+            local level = args.fail_on
+            if level ~= "error" and level ~= "warning" and level ~= "hint" then
+                return nil, "--fail-on must be error, warning or hint"
+            end
         elseif item == "daemon" and #args.paths == 0 and not args.daemon then
             index = index + 1
             args.daemon = argv[index] or "status"
@@ -212,6 +222,9 @@ function M.main(argv)
     for code, level in pairs(args.severity) do
         config.severity[code] = level
     end
+    if args.fail_on then
+        config.fail_on = args.fail_on
+    end
     if args.lua_version then
         config.lua_version = args.lua_version
     end
@@ -251,7 +264,23 @@ function M.main(argv)
     if summary.had_parse_error then
         return 2
     end
-    return #diagnostics > 0 and 1 or 0
+
+    -- Which findings *fail* is a separate question from which are reported, and
+    -- this is the one knob that separates them. It is not a baseline (spec §5):
+    -- nothing is hidden and nothing is recorded as acceptable -- every diagnostic
+    -- is still printed, every run, in full. It only lets a project gate CI on
+    -- the codes it has already promoted to errors while it works through the
+    -- rest in the open.
+    if summary.errors > 0 then
+        return 1
+    end
+    if config.fail_on ~= "error" and summary.warnings > 0 then
+        return 1
+    end
+    if config.fail_on ~= "error" and config.fail_on ~= "warning" and summary.hints > 0 then
+        return 1
+    end
+    return 0
 end
 
 return M

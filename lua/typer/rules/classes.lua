@@ -17,20 +17,16 @@ function M.run(model, ctx)
         local reason = class_shape_reason(binding)
 
         if reason and not binding.class_tag then
-            -- A `---@type` naming an existing class is an acceptable alternative to
-            -- declaring the class inline.
-            local typed_as_class = false
-            if binding.type_tag and binding.type_tag.type then
-                local root = binding.type_tag.type
-                while root and (root.k == "optional" or root.k == "paren" or root.k == "array") do
-                    root = root.of
-                end
-                if root and root.k == "name" and registry_mod.resolve(registry, root.name) then
-                    typed_as_class = true
-                end
-            end
+            -- Any `---@type` already answers the question this rule exists to
+            -- force. `missing-class` asks "literal shape or class?", and an author
+            -- who wrote `---@type string[]` has said: a shape, and here it is.
+            -- `table-decl` accepts `---@type` for exactly that reason, and a
+            -- class-shaped table is no different -- a lazy-list proxy really is a
+            -- `string[]`. What they wrote is still held to §3.4, so `---@type
+            -- table` does not get through here either.
+            local declared = binding.type_tag ~= nil or binding.enum_tag ~= nil
 
-            if not typed_as_class then
+            if not declared then
                 ctx.emit(
                     diagnostic.new(
                         model.path,

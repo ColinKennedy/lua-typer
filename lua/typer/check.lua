@@ -188,6 +188,9 @@ local function index_and_follow(run, model, role)
 
         if resolution.kind == "lua" then
             local normalized = compat.absolute(resolution.path, run.cwd)
+            -- Remember where the module landed: `mod.f = function() end` in
+            -- another file has to reach that file's exported signature.
+            registry_mod.bind_module(run.registry, entry.module, normalized)
             if not run.models[normalized] then
                 local required, parse_error = load_model(run, normalized, resolution.role or "library")
                 if required then
@@ -316,6 +319,29 @@ local function index_workspace_file(run, path, role)
     end
 end
 
+--- The module name a file answers to, given the search-path directory it was
+--- found under: the inverse of `modpath.resolve`.
+---
+--- Worth computing for every scanned file, not just the ones something
+--- `require`s, because a global table is routinely the same namespace as a
+--- module -- `vim.lsp.get_clients` is `get_clients` in `vim/lsp.lua`. Without
+--- the name, a re-assignment to that global cannot be traced to the signature
+--- it overrides.
+---@param dir string
+---@param file string
+---@return string|nil
+local function module_name_of(dir, file)
+    local relative = file:sub(#dir + 2)
+    if file:sub(1, #dir + 1) ~= dir .. "/" or relative == "" then
+        return nil
+    end
+
+    local stem = relative:gsub("%.lua$", ""):gsub("/", ".")
+    -- `a/b/init.lua` is the module `a.b`, exactly as the `?/init.lua` pattern
+    -- that found it says.
+    return (stem:gsub("%.init$", ""))
+end
+
 --- Eagerly indexes the workspace: ambient `---@class` declarations may live in
 --- files that nothing requires, so lazy loading alone would miss them.
 ---@param run typer.Run
@@ -331,6 +357,10 @@ local function index_workspace(run)
                 for _, file in ipairs(fs.list_lua(dir)) do
                     local absolute = compat.absolute(file, run.cwd)
                     if not run.models[absolute] and not config_mod.is_excluded(run.config, absolute) then
+                        local module = module_name_of(dir, absolute)
+                        if module then
+                            registry_mod.bind_module(run.registry, module, absolute)
+                        end
                         index_workspace_file(run, absolute, entry.role)
                     end
                 end
@@ -466,7 +496,10 @@ function M.run(paths, options)
     local errors, warnings, hints = 0, 0, 0
 
     for _, diag in ipairs(run.diagnostics) do
-        local severity = config_mod.severity_of(config, diag.code)
+        -- Per-path rules are written against the project, so they are matched
+        -- against the path relative to the config -- not to wherever typer
+        -- happened to be invoked from.
+        local severity = config_mod.severity_of(config, diag.code, compat.relative(diag.file, config.root))
         if severity ~= "off" then
             diag.severity = severity
             -- Paths are absolute internally, for identity; they are reported relative

@@ -10,6 +10,11 @@ M.DEFAULT_SEVERITY = {
     ["bare-decl"] = "error",
     ["nil-decl"] = "error",
     ["table-decl"] = "error",
+    -- The `local M = {}` module preamble. Split out of `table-decl` because the
+    -- literal-or-class question it asks has no consumer for a table whose every
+    -- member is a function, and off by default because that made it a fifth of
+    -- every report on real code. See `analyze.is_namespace`.
+    ["namespace-decl"] = "off",
     ["global-decl"] = "error",
     ["undefined-global"] = "error",
     -- functions

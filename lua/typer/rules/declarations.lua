@@ -63,18 +63,32 @@ local function check_binding(binding, model, ctx)
         -- A class-shaped table gets `missing-class` instead: one defect, one
         -- diagnostic, and the specific message is the actionable one.
         if not is_annotated(binding) and not analyze.class_shape_reason(binding) then
-            ctx.emit(
-                diagnostic.new(
-                    model.path,
-                    binding,
-                    "table-decl",
-                    (
-                        "table '%s' has no ---@type or ---@class; inference cannot tell a "
-                        .. "literal shape from a class"
-                    ):format(binding.name),
-                    ("---@type table<K, V>  (or ---@class %s)"):format(binding.name)
+            -- A pure function namespace -- the module preamble -- is neither a
+            -- literal nor a class, so it answers under its own code.
+            if analyze.is_namespace(binding) then
+                ctx.emit(
+                    diagnostic.new(
+                        model.path,
+                        binding,
+                        "namespace-decl",
+                        ("table '%s' is a function namespace with no ---@type or ---@class"):format(binding.name),
+                        ("---@class %s"):format(binding.name)
+                    )
                 )
-            )
+            else
+                ctx.emit(
+                    diagnostic.new(
+                        model.path,
+                        binding,
+                        "table-decl",
+                        (
+                            "table '%s' has no ---@type or ---@class; inference cannot tell a "
+                            .. "literal shape from a class"
+                        ):format(binding.name),
+                        ("---@type table<K, V>  (or ---@class %s)"):format(binding.name)
+                    )
+                )
+            end
         end
     elseif binding.kind == "scalar" then
         if config.require_scalar_types and not is_annotated(binding) then

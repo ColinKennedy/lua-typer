@@ -8,6 +8,8 @@ local Pair = {}
 ---@return fun(): [integer, string]?
 local function iterate(entries, single)
   print(single)
+  -- Declared by the enclosing ---@return, and its one value agrees with the
+  -- one the tuple promises.
   return function()
     return nil
   end

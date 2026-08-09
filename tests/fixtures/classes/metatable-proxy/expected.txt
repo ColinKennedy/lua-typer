@@ -1,0 +1,2 @@
+input.lua:15:7: error: [table-decl] table 'undeclared' has no ---@type or ---@class; inference cannot tell a literal shape from a class
+input.lua:33:7: error: [missing-class] table 'Untyped' assigns __index but has no ---@class annotation

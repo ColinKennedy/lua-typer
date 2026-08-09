@@ -1,0 +1,1 @@
+input.lua:37:5: error: [unresolved-type] type 'NeverDeclared' is not declared anywhere in the type index

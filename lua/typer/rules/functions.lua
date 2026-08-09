@@ -4,6 +4,7 @@ local M = {}
 
 local diagnostic = require("typer.diagnostic")
 local docblock = require("typer.docblock")
+local registry_mod = require("typer.registry")
 
 --- True when the enclosing `---@return` already types this position as a
 --- function, so a returned literal need not annotate itself again.
@@ -11,6 +12,69 @@ local docblock = require("typer.docblock")
 ---@return boolean
 local function typed_by_context(info)
     return info.exempt
+end
+
+--- The declaration this function overrides, once the project-wide index can
+--- answer for the sites `analyze` could not (spec §1, §3.2).
+---
+--- A function assigned into a slot that is *already typed* inherits that type:
+--- there is nothing for the author to add that is not already stated somewhere
+--- typer has read, and a `---@param` written here would be duplication typer
+--- cannot check -- it does not verify assignments (spec §2) -- and so drift it
+--- cannot catch.
+---@param info typer.FuncInfo
+---@param ctx typer.RuleContext
+---@return typer.FuncDecl|nil
+local function inherited_declaration(info, ctx)
+    local inherited = info.inherited
+    if not inherited then
+        return nil
+    end
+    if inherited.decl then
+        return inherited.decl
+    end
+
+    local key = inherited.key or ""
+    local module, field = key:match("^require:(.+):([^:]+)$")
+    if module then
+        return registry_mod.module_export(ctx.registry, module, field)
+    end
+
+    local dotted = key:match("^global:(.+)$")
+    if dotted then
+        local direct = ctx.registry.qualified[dotted]
+        if direct then
+            return direct
+        end
+        -- A global table is often the same namespace as a module: `vim.lsp` is
+        -- `vim/lsp.lua`, whose `function lsp.get_clients()` is declared against a
+        -- local that never appears under the global name. Falling back to the
+        -- dotted prefix as a module name reaches it.
+        local prefix, name = dotted:match("^(.+)%.([^.]+)$")
+        if prefix then
+            return registry_mod.module_export(ctx.registry, prefix, name)
+        end
+    end
+
+    return nil
+end
+
+--- True when the author wrote annotations of their own on this function.
+---
+--- An inherited signature only stands in for annotations that are *absent*. A
+--- half-written doc block is a mistake worth reporting, so the moment one
+--- `---@param` or `---@return` appears the ordinary rules take over and the
+--- block has to be complete.
+---@param info typer.FuncInfo
+---@return boolean
+local function self_annotated(info)
+    for _, tag in ipairs(info.tags) do
+        local kind = tag.kind
+        if kind == "param" or kind == "return" or kind == "vararg" or kind == "overload" then
+            return true
+        end
+    end
+    return false
 end
 
 ---@param model typer.FileModel
@@ -24,6 +88,7 @@ function M.run(model, ctx)
             local param_tags = docblock.find_all(info.tags, "param")
             local return_tags = docblock.find_all(info.tags, "return")
             local overloads = docblock.find_all(info.tags, "overload")
+            local inherited = not self_annotated(info) and inherited_declaration(info, ctx) or nil
 
             -- Index annotations by name so a mismatched order is reported as a name
             -- mismatch rather than a cascade of missing params.
@@ -90,7 +155,9 @@ function M.run(model, ctx)
             for index, param in ipairs(real_params) do
                 local tag = by_name[param.name]
 
-                if not tag then
+                -- An inherited signature already types every parameter here, so
+                -- only the annotations the author *did* write are checked.
+                if not tag and not inherited then
                     if param.vararg then
                         ctx.emit(
                             diagnostic.new(
@@ -112,7 +179,7 @@ function M.run(model, ctx)
                             )
                         )
                     end
-                else
+                elseif tag then
                     -- Positional check: annotation N should name parameter N.
                     local positional = param_tags[index]
                     if
@@ -181,7 +248,33 @@ function M.run(model, ctx)
             end
 
             -- Returns: one `---@return` per returned value, at the widest arity.
-            if info.has_value_return then
+            if info.has_value_return and inherited then
+                -- The count is declared elsewhere, so a disagreement here is not a
+                -- missing annotation -- it is this body contradicting the
+                -- signature it was assigned into, which no amount of annotating
+                -- *here* would fix. Only "returns more than promised" is reported:
+                -- `return_arity` is a maximum across paths, and a path that falls
+                -- off the end legitimately returns nothing.
+                if
+                    not inherited.indeterminate
+                    and not info.indeterminate_arity
+                    and info.return_arity > inherited.returns
+                then
+                    ctx.emit(
+                        diagnostic.new(
+                            model.path,
+                            info,
+                            "return-arity-mismatch",
+                            ("function returns %d values but %s declares %d"):format(
+                                info.return_arity,
+                                info.inherited.origin,
+                                inherited.returns
+                            ),
+                            nil
+                        )
+                    )
+                end
+            elseif info.has_value_return then
                 if #return_tags < info.return_arity then
                     local missing = info.return_arity - #return_tags
                     ctx.emit(

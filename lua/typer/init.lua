@@ -29,12 +29,12 @@ M.diagnostic = require("typer.diagnostic")
 ---@return typer.Diagnostic[]
 ---@return typer.Summary
 function M.run(paths, options)
-  options = options or {}
-  if not options.config then
-    local fs = require("typer.fs")
-    options.config = M.config.load(options.config_path, fs.cwd())
-  end
-  return M.check.run(paths, options)
+    options = options or {}
+    if not options.config then
+        local fs = require("typer.fs")
+        options.config = M.config.load(options.config_path, fs.cwd())
+    end
+    return M.check.run(paths, options)
 end
 
 return M

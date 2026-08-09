@@ -4,6 +4,6 @@
 local script = arg and arg[0] or "typer"
 local root = script:match("^(.*)[/\\]bin[/\\][^/\\]*$")
 if root then
-  package.path = root .. "/lua/?.lua;" .. root .. "/lua/?/init.lua;" .. package.path
+    package.path = root .. "/lua/?.lua;" .. root .. "/lua/?/init.lua;" .. package.path
 end
 os.exit(require("typer.cli").main(arg or {}))

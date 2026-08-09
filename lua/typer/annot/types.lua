@@ -8,6 +8,7 @@
 ---   primary    := name generic_args?          -- Foo, table<K,V>, Node
 ---               | 'fun' '(' params ')' rets?  -- fun(a: string): boolean
 ---               | '{' fields '}'              -- { a: string, [integer]: Foo }
+---               | '[' type (',' type)* ']'    -- [integer, string]  (tuple)
 ---               | literal                     -- "read" | 42 | true
 ---               | '(' type ')'
 ---
@@ -41,7 +42,7 @@ M.VAGUE = {
 M.BUILTIN_GENERIC = { ["table"] = 2 }
 
 ---@class typer.TypeNode
----@field k "name"|"array"|"optional"|"union"|"fun"|"shape"|"literal"|"paren"
+---@field k "name"|"array"|"optional"|"union"|"fun"|"shape"|"literal"|"paren"|"tuple"
 ---@field l integer    -- absolute source line
 ---@field c integer    -- absolute source column
 ---@field ec integer   -- absolute end column, exclusive
@@ -294,6 +295,25 @@ local function parse_primary(scanner)
     return parse_shape(scanner, start_offset)
   end
 
+  -- Tuple: `[integer, string]`. Unambiguous here -- in *primary* position a `[`
+  -- can only open a tuple, whereas after a type it is the `[]` array suffix.
+  if try_consume(scanner, "[") then
+    ---@type typer.TypeNode[]
+    local items = {}
+    skip_space(scanner)
+    if not try_consume(scanner, "]") then
+      repeat
+        items[#items + 1] = parse_type(scanner)
+        skip_space(scanner)
+      until not try_consume(scanner, ",")
+      consume(scanner, "]")
+    end
+    return {
+      k = "tuple", items = items,
+      l = scanner.line, c = abs_col(scanner, start_offset), ec = abs_col(scanner, scanner.pos),
+    }
+  end
+
   -- `...` appears as a bare type in legacy `---@vararg`-style positions.
   if try_consume(scanner, "...") then
     return {
@@ -447,6 +467,11 @@ function M.render(node)
       out = out .. ": " .. table.concat(rets, ", ")
     end
     return out
+  elseif kind == "tuple" then
+    ---@type string[]
+    local items = {}
+    for i, item in ipairs(node.items) do items[i] = M.render(item) end
+    return "[" .. table.concat(items, ", ") .. "]"
   elseif kind == "shape" then
     ---@type string[]
     local fields = {}
@@ -482,6 +507,8 @@ function M.walk(node, visit)
   elseif kind == "fun" then
     for _, param in ipairs(node.params) do M.walk(param.type, visit) end
     for _, ret in ipairs(node.returns) do M.walk(ret, visit) end
+  elseif kind == "tuple" then
+    for _, item in ipairs(node.items) do M.walk(item, visit) end
   elseif kind == "shape" then
     for _, field in ipairs(node.fields) do
       if field.key_type then M.walk(field.key_type, visit) end

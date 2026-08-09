@@ -238,7 +238,7 @@ local function index_workspace(run)
   local seen = {}
 
   for _, entry in ipairs(run.search.entries) do
-    if entry.role == "workspace" or entry.role == "stub" then
+    if entry.role == "workspace" or entry.role == "stub" or entry.eager then
       local dir = entry.pattern:match("^(.*)/%?")
       if dir and not seen[dir] and fs.is_dir(dir) then
         seen[dir] = true

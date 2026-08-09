@@ -142,6 +142,25 @@ Stubs deliberately outrank real source: a hand-written `---@meta` file is the
 escape hatch for a dependency you cannot annotate. `LUA_CPATH` is searched only
 to *detect* C modules — typer cannot read annotations out of a `.so`.
 
+`.luarc.json` entries have `$VAR`, `${VAR}` and `~` expanded, resolve relative
+to the `.luarc.json` itself, and are scanned **eagerly** — they are the user
+declaring "these are my type sources", and nothing in a project necessarily
+`require`s them.
+
+### Host-injected globals
+
+Some globals are created by the embedding program and assigned by no Lua file at
+all — Neovim's `vim` is the canonical case. In a `---@meta` file, a field
+assignment declares the global:
+
+```lua
+---@meta
+vim.NIL = ...        -- declares `vim`
+```
+
+Meta files only: in ordinary code the same shape would let a typo declare
+itself.
+
 ## No baseline mode. Ever.
 
 Deliberately rejected, not overlooked. A baseline file lets a project declare its

@@ -196,6 +196,43 @@ local function add_signal(binding, signal, node)
   if not binding.signals[signal] then binding.signals[signal] = node end
 end
 
+--- The root `Name` of a dotted target: `a.b.c` -> `a`.
+---@param node typer.Node|nil
+---@return typer.Node|nil
+local function root_name(node)
+  while node and node.k == "Index" do node = node.obj end
+  if node and node.k == "Name" then return node end
+  return nil
+end
+
+--- In a `---@meta` file, `X.field = ...` asserts that the global `X` exists.
+---
+--- This is how definition files declare host-injected globals: Neovim's runtime
+--- never assigns `vim` itself -- the C host does -- and its meta files only ever
+--- write `vim.NIL = ...`. Restricted to meta files on purpose: in ordinary code
+--- the same shape would let a typo (`vmi.x = 1`) declare itself.
+---@param walker typer.Walker
+---@param target typer.Node
+local function declare_meta_global(walker, target)
+  local model = walker.model
+  if not model.is_meta then return end
+
+  local root = root_name(target)
+  if not root then return end
+  if lookup(walker, root.name) or model.globals[root.name] then return end
+
+  ---@type typer.Binding
+  local binding = {
+    name = root.name, l = root.l, c = root.c, ec = root.ec,
+    scope = "global", kind = "table", signals = {}, fields = {}, methods = {},
+    tags = {}, host_declared = true,
+  }
+  model.globals[root.name] = binding
+  -- Must also land in `bindings`: that is the list the registry walks when it
+  -- collects global names, and `globals` alone never reaches the type index.
+  model.bindings[#model.bindings + 1] = binding
+end
+
 ---@type (fun(walker: typer.Walker, block: typer.Node[])), (fun(walker: typer.Walker, node: typer.Node|nil, position: string|nil, tags: typer.Tag[]|nil)), (fun(walker: typer.Walker, node: typer.Node))
 local walk_block, walk_expr, walk_stat
 
@@ -503,6 +540,7 @@ walk_stat = function(walker, node)
     ---@type typer.Binding|nil
     local owner = nil
     if target.k == "Index" and not target.computed then
+      declare_meta_global(walker, target)
       owner = resolve(walker, target.obj)
       if owner then
         if node.is_method then
@@ -589,6 +627,7 @@ walk_stat = function(walker, node)
           end
         end
       else
+        declare_meta_global(walker, target)
         walk_expr(walker, target.obj)
         if target.computed then walk_expr(walker, target.key) end
         record_field_assignment(walker, target, value, tags)

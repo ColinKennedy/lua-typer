@@ -21,6 +21,24 @@ local json = require("typer.json")
 ---@class typer.SearchEntry
 ---@field pattern string        -- a `?`-bearing path template
 ---@field role "stub"|"workspace"|"library"
+---@field eager boolean|nil     -- scanned up front rather than on first require
+
+--- Expands `$VAR` / `${VAR}` / a leading `~` in a path.
+---
+--- `.luarc.json` routinely contains `$VIMRUNTIME/lua`, which is the whole point
+--- of reading the file for a Neovim project.
+---@param path string
+---@return string
+local function expand(path)
+  local expanded = path:gsub("^~", os.getenv("HOME") or "~")
+  expanded = expanded:gsub("%${([%w_]+)}", function(name)
+    return os.getenv(name) or ""
+  end)
+  expanded = expanded:gsub("%$([%w_]+)", function(name)
+    return os.getenv(name) or ""
+  end)
+  return expanded
+end
 
 --- Where the bundled stubs live, relative to this file.
 ---@return string|nil
@@ -43,9 +61,10 @@ end
 ---@param dir string
 ---@param role string
 ---@param out typer.SearchEntry[]
-local function add_dir(dir, role, out)
-  out[#out + 1] = { pattern = compat.join(dir, "?.lua"), role = role }
-  out[#out + 1] = { pattern = compat.join(dir, "?/init.lua"), role = role }
+---@param eager? boolean
+local function add_dir(dir, role, out, eager)
+  out[#out + 1] = { pattern = compat.join(dir, "?.lua"), role = role, eager = eager }
+  out[#out + 1] = { pattern = compat.join(dir, "?/init.lua"), role = role, eager = eager }
 end
 
 --- Splits a `;`-separated Lua path, expanding `;;` to the interpreter default.
@@ -80,8 +99,13 @@ local function add_luarc(root, out)
 
   for _, entry in ipairs(library) do
     if type(entry) == "string" then
-      local dir = entry:gsub("^~", os.getenv("HOME") or "~")
-      if fs.is_dir(dir) then add_dir(dir, "library", out) end
+      -- Relative entries are relative to the .luarc.json, not to the cwd.
+      local dir = compat.absolute(expand(entry), root)
+      -- Eager: `workspace.library` is the user declaring "these are my type
+      -- sources". Nothing in the project need `require` them -- the `vim`
+      -- global lives in a runtime file no config ever requires -- so lazy
+      -- indexing would never reach them. LuaLS scans them up front too.
+      if fs.is_dir(dir) then add_dir(dir, "library", out, true) end
     end
   end
 end

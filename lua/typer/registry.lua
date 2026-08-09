@@ -45,10 +45,11 @@ local types = require("typer.annot.types")
 ---@field globals table<string, typer.GlobalDecl>
 ---@field modules table<string, string>   -- module name -> declaring file
 ---@field generic_hints table<string, boolean>|nil
+---@field indexed table<string, boolean>  -- files already folded in
 
 ---@return typer.Registry
 function M.new()
-  return { decls = {}, duplicates = {}, globals = {}, modules = {} }
+  return { decls = {}, duplicates = {}, globals = {}, modules = {}, indexed = {} }
 end
 
 ---@param registry typer.Registry
@@ -135,6 +136,13 @@ end
 ---@param opts typer.IndexOptions
 function M.index_file(registry, model, opts)
   opts = opts or {}
+
+  -- Idempotent per file. A checked file that also sits under a `source_root` is
+  -- reached twice -- once by the eager workspace scan, once by the checked pass
+  -- -- and indexing it twice registers every declaration twice, which shows up
+  -- as each `duplicate-class` being reported two times.
+  if registry.indexed[model.path] then return end
+  registry.indexed[model.path] = true
 
   for _, tags in ipairs(model.decl_tags) do
     index_tags(registry, tags, model.path, opts)

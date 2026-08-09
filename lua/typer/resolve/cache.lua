@@ -15,16 +15,21 @@ local fs = require("typer.fs")
 
 local FORMAT_VERSION = 1
 
+--- One cached file's declaration slice, keyed by its `mtime:size` signature.
+---@class typer.CacheEntry
+---@field signature string
+---@field decls typer.PlainValue|nil
+
 ---@class typer.Cache
 ---@field enabled boolean
 ---@field dir string
 ---@field path string
----@field entries table<string, table>
+---@field entries table<string, typer.CacheEntry>
 ---@field dirty boolean
 ---@field tag string
 
 --- Serialises a table of plain data back to Lua source.
----@param value any
+---@param value typer.PlainValue
 ---@param out string[]
 local function serialize(value, out)
   local kind = type(value)
@@ -101,7 +106,7 @@ end
 --- Returns a cached entry when its signature still matches the file on disk.
 ---@param cache typer.Cache
 ---@param path string
----@return table|nil
+---@return typer.CacheEntry|nil
 function M.get(cache, path)
   if not cache.enabled then return nil end
 
@@ -120,7 +125,7 @@ end
 
 ---@param cache typer.Cache
 ---@param path string
----@param data table
+---@param data typer.CacheEntry
 function M.put(cache, path, data)
   if not cache.enabled then return end
 

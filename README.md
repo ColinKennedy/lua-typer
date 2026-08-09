@@ -234,8 +234,12 @@ typer daemon check lua/app/client.lua
 lua tests/run.lua                 # fixture suite
 lua tests/run.lua classes         # filter by name
 lua tests/corpus.lua <dir>...     # parser validation + throughput
-typer lua/                        # typer checks itself
+typer lua/                        # typer checks itself -- must exit 0
 ```
+
+typer passes its own strictest check with zero diagnostics, and CI enforces it
+on every supported interpreter. That is the point of having no baseline mode:
+the only way to a clean run is to write the annotations.
 
 Fixtures live in `tests/fixtures/<phase>/<name>/` as `input.lua` +
 `expected.txt`, or a directory with `.typer.lua` + `TARGETS` for multi-file

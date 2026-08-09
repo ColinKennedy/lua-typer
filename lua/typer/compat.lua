@@ -3,9 +3,6 @@
 ---@class typer.compat
 local M = {}
 
----@type fun(list: table, i?: integer, j?: integer): ...
-M.unpack = table.unpack or unpack
-
 ---@type string
 M.lua_version = _VERSION or "Lua 5.1"
 
@@ -15,7 +12,7 @@ M.is_jit = type(rawget(_G, "jit")) == "table"
 --- `load` with a string chunk, present on every version.
 ---@param chunk string
 ---@param name string
----@return function|nil
+---@return (fun(...): ...)|nil
 ---@return string|nil
 function M.load_string(chunk, name)
   if _VERSION == "Lua 5.1" and not M.is_jit then
@@ -27,7 +24,7 @@ end
 --- `load` a binary (string.dump) chunk.
 ---@param chunk string
 ---@param name string
----@return function|nil
+---@return (fun(...): ...)|nil
 ---@return string|nil
 function M.load_binary(chunk, name)
   if _VERSION == "Lua 5.1" and not M.is_jit then
@@ -37,9 +34,9 @@ function M.load_binary(chunk, name)
 end
 
 --- setfenv/`_ENV` bridge, used to sandbox `.typer.lua` config files.
----@param fn function
----@param env table
----@return function
+---@param fn fun(...): ...
+---@param env table<string, typer.PlainValue|(fun(...): ...)>
+---@return fun(...): ...
 function M.setfenv(fn, env)
   if rawget(_G, "setfenv") then
     return rawget(_G, "setfenv")(fn, env) or fn
@@ -116,6 +113,7 @@ function M.normalize(path)
   local drive = path:match("^(%a:)/") or ""
   if drive ~= "" then path = path:sub(#drive + 1) end
 
+  ---@type string[]
   local parts = {}
   for piece in path:gmatch("[^/]+") do
     if piece == ".." then
@@ -166,7 +164,9 @@ end
 ---@param ... string
 ---@return string
 function M.join(...)
+  ---@type string[]
   local parts = { ... }
+  ---@type string[]
   local out = {}
   for i = 1, #parts do
     local piece = parts[i]

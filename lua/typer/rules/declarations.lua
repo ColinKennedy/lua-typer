@@ -28,7 +28,11 @@ function M.run(model, ctx)
   local config = ctx.config
 
   for _, binding in ipairs(model.bindings) do
-    if binding.scope == "global" then
+    -- `_` is the conventional discard; exactly `_`, never `_foo` (spec §4).
+    if binding.name == "_" then
+      -- nothing to annotate: the value is deliberately thrown away
+
+    elseif binding.scope == "global" then
       -- Globals cross files, so they need a declaration whatever their value.
       if not is_annotated(binding) and config.strict_globals ~= false then
         ctx.emit(diagnostic.new(model.path, binding, "global-decl",

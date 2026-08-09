@@ -3,6 +3,14 @@
 --- Reports where LuaLS type annotations are missing or too vague. Report-only:
 --- it never edits files.
 ---@class typer
+---@field VERSION string
+---@field check typer.check
+---@field config typer.config
+---@field parser typer.parser
+---@field lexer typer.lexer
+---@field analyze typer.analyze
+---@field registry typer.registry
+---@field diagnostic typer.diagnostic
 local M = {}
 
 M.VERSION = "0.1.0"
@@ -17,9 +25,9 @@ M.diagnostic = require("typer.diagnostic")
 
 --- Convenience wrapper: check paths with default configuration.
 ---@param paths string[]
----@param options? table
+---@param options? typer.CheckOptions
 ---@return typer.Diagnostic[]
----@return table
+---@return typer.Summary
 function M.run(paths, options)
   options = options or {}
   if not options.config then

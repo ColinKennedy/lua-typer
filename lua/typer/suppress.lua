@@ -8,9 +8,16 @@
 ---@class typer.suppress
 local M = {}
 
+--- One suppression window: a line range, and the codes it silences (nil for
+--- every code).
+---@class typer.SuppressRange
+---@field from integer
+---@field to integer
+---@field codes table<string, boolean>|nil
+
 ---@class typer.Suppressions
 ---@field whole_file boolean
----@field ranges table[]              -- { from, to, codes = table|nil }
+---@field ranges typer.SuppressRange[]
 
 --- Splits a code list, or nil when the comment suppresses everything.
 ---@param text string
@@ -27,11 +34,11 @@ local function parse_codes(text)
 end
 
 --- Finds the statement a suppression comment applies to.
----@param statements table[]
+---@param statements typer.StatementSpan[]
 ---@param line integer
----@return table|nil
+---@return typer.StatementSpan|nil
 local function statement_after(statements, line)
-  ---@type table|nil
+  ---@type typer.StatementSpan|nil
   local best = nil
   for _, span in ipairs(statements) do
     if span.l > line and (not best or span.l < best.l) then best = span end
@@ -39,11 +46,11 @@ local function statement_after(statements, line)
   return best
 end
 
----@param statements table[]
+---@param statements typer.StatementSpan[]
 ---@param line integer
----@return table|nil
+---@return typer.StatementSpan|nil
 local function statement_on(statements, line)
-  ---@type table|nil
+  ---@type typer.StatementSpan|nil
   local best = nil
   for _, span in ipairs(statements) do
     if span.l <= line and span.el >= line then

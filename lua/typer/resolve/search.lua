@@ -95,6 +95,12 @@ local function version_env_names(config)
   return { "LUA_PATH", "LUA_PATH_" .. suffix }
 end
 
+--- Command-line overrides that outrank the config file.
+---@class typer.SearchOverrides
+---@field stub_paths string[]|nil
+---@field lua_path string[]|nil
+---@field inherit_path boolean|nil
+
 ---@class typer.SearchPath
 ---@field entries typer.SearchEntry[]
 ---@field cpath_patterns string[]
@@ -102,7 +108,7 @@ end
 
 --- Builds the search path for a run.
 ---@param config typer.Config
----@param overrides table          -- { stub_paths, lua_path, inherit_path }
+---@param overrides typer.SearchOverrides
 ---@return typer.SearchPath
 function M.build(config, overrides)
   overrides = overrides or {}

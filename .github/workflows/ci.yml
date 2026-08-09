@@ -41,5 +41,7 @@ jobs:
       - name: rockspec lints
         run: luarocks lint typer-scm-1.rockspec
 
-      - name: self-check runs clean
-        run: lua bin/typer --version
+      # typer must pass its own strictest check. This is the regression guard on
+      # every annotation in the codebase -- exit 0 means zero diagnostics.
+      - name: typer checks itself
+        run: lua bin/typer lua/

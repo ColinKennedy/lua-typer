@@ -21,11 +21,30 @@ local types = require("typer.annot.types")
 ---@field generics table<string, boolean>
 ---@field checked boolean            -- declared in a file that is being reported on
 
+--- Two declarations of the same name, reported at both sites.
+---@class typer.DuplicateDecl
+---@field first typer.TypeDecl
+---@field second typer.TypeDecl
+
+--- A global name known to exist somewhere in the index.
+---@class typer.GlobalDecl
+---@field name string
+---@field file string
+---@field l integer
+---@field c integer
+---@field annotated boolean|nil
+
+--- How a file is being indexed.
+---@class typer.IndexOptions
+---@field checked boolean
+---@field is_stub boolean
+
 ---@class typer.Registry
 ---@field decls table<string, typer.TypeDecl>
----@field duplicates table[]
----@field globals table<string, table>
+---@field duplicates typer.DuplicateDecl[]
+---@field globals table<string, typer.GlobalDecl>
 ---@field modules table<string, string>   -- module name -> declaring file
+---@field generic_hints table<string, boolean>|nil
 
 ---@return typer.Registry
 function M.new()
@@ -54,7 +73,7 @@ end
 ---@param registry typer.Registry
 ---@param tags typer.Tag[]
 ---@param file string
----@param opts table
+---@param opts typer.IndexOptions
 local function index_tags(registry, tags, file, opts)
   ---@type typer.TypeDecl|nil
   local current_class = nil
@@ -113,7 +132,7 @@ end
 --- Indexes one analysed file into the registry.
 ---@param registry typer.Registry
 ---@param model typer.FileModel
----@param opts table                 -- { checked = boolean, is_stub = boolean }
+---@param opts typer.IndexOptions
 function M.index_file(registry, model, opts)
   opts = opts or {}
 

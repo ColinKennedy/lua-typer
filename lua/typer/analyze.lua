@@ -9,6 +9,16 @@ local M = {}
 
 local docblock = require("typer.docblock")
 
+--- A field or method discovered on a class, with the position to report at.
+---@class typer.FieldEntry
+---@field name string
+---@field l integer
+---@field c integer
+---@field ec integer
+---@field is_function boolean
+---@field annotated boolean|nil       -- carries its own `---@type`
+---@field in_constructor boolean|nil
+
 ---@class typer.Binding
 ---@field name string
 ---@field l integer
@@ -22,8 +32,12 @@ local docblock = require("typer.docblock")
 ---@field class_tag typer.Tag|nil
 ---@field type_tag typer.Tag|nil
 ---@field signals table<string, typer.Node>   -- class-shape signals
----@field fields table<string, table>         -- discovered data fields
----@field methods table<string, table>        -- discovered methods
+---@field fields table<string, typer.FieldEntry>    -- discovered data fields
+---@field methods table<string, typer.FieldEntry>   -- discovered methods
+---@field class_owner typer.Binding|nil       -- the class `self` stands for
+---@field enum_tag typer.Tag|nil
+---@field index integer|nil                   -- position in a multi-name local
+---@field explicit_nil boolean|nil
 ---@field inherits typer.Node|nil             -- detected base expression
 ---@field module string|nil                   -- for `require` bindings
 
@@ -41,6 +55,26 @@ local docblock = require("typer.docblock")
 ---@field owner typer.Binding|nil      -- class the method belongs to
 ---@field exempt boolean               -- inline expression, typed by context
 
+--- The line range of one statement, so `-- typer: ignore` can cover a whole
+--- multi-line statement rather than just its first line.
+---@class typer.StatementSpan
+---@field l integer
+---@field el integer
+
+--- A read of a name that resolved to no local binding.
+---@class typer.GlobalRead
+---@field name string
+---@field l integer
+---@field c integer
+---@field ec integer
+
+--- One `require("...")` call site, with a literal module name.
+---@class typer.RequireSite
+---@field module string
+---@field l integer
+---@field c integer
+---@field ec integer
+
 ---@class typer.FileModel
 ---@field path string
 ---@field chunk typer.Chunk
@@ -48,15 +82,19 @@ local docblock = require("typer.docblock")
 ---@field is_meta boolean
 ---@field bindings typer.Binding[]
 ---@field globals table<string, typer.Binding>
----@field global_reads table[]
+---@field global_reads typer.GlobalRead[]
 ---@field functions typer.FuncInfo[]
----@field requires table[]
+---@field requires typer.RequireSite[]
 ---@field decl_tags typer.Tag[][]      -- doc blocks declaring ambient types
+---@field statements typer.StatementSpan[]
+---@field role string|nil
+---@field source string|nil
 
 ---@class typer.Walker
 ---@field model typer.FileModel
----@field scopes table[]
----@field fn_stack table[]
+---@field scopes table<string, typer.Binding>[]
+---@field fn_stack typer.FuncInfo[]
+---@field pending_name string|nil     -- name the current expression is bound to
 
 ---@param walker typer.Walker
 local function push_scope(walker)
@@ -158,6 +196,7 @@ local function add_signal(binding, signal, node)
   if not binding.signals[signal] then binding.signals[signal] = node end
 end
 
+---@type (fun(walker: typer.Walker, block: typer.Node[])), (fun(walker: typer.Walker, node: typer.Node|nil, position: string|nil, tags: typer.Tag[]|nil)), (fun(walker: typer.Walker, node: typer.Node))
 local walk_block, walk_expr, walk_stat
 
 --- Records a `Function` node. `owner` is the class binding for methods.
@@ -165,7 +204,7 @@ local walk_block, walk_expr, walk_stat
 ---@param node typer.Node
 ---@param tags typer.Tag[]
 ---@param display string
----@param anchor typer.Node|table
+---@param anchor typer.Anchor
 ---@param owner typer.Binding|nil
 ---@param exempt boolean
 ---@return typer.FuncInfo
@@ -340,6 +379,7 @@ local function record_field_assignment(walker, target, value, tags)
   end
 
   local field_name = target.name
+  ---@type typer.FieldEntry
   local entry = {
     name = field_name,
     l = target.key_l or target.l,
@@ -460,6 +500,7 @@ walk_stat = function(walker, node)
     local target = node.target
     local display = describe(target)
 
+    ---@type typer.Binding|nil
     local owner = nil
     if target.k == "Index" and not target.computed then
       owner = resolve(walker, target.obj)
@@ -531,6 +572,7 @@ walk_stat = function(walker, node)
             if value and value.k == "Table" then
               for _, field in ipairs(value.fields) do
                 if field.kind == "named" then
+                  ---@type typer.FieldEntry
                   local entry = {
                     name = field.name, l = field.l, c = field.c, ec = field.ec,
                     is_function = field.value and field.value.k == "Function",

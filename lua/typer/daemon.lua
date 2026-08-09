@@ -27,6 +27,33 @@ local json_report = require("typer.report.json")
 
 local IDLE_TIMEOUT = 30 * 60
 
+--- The subset of a luasocket handle this module uses. Declared rather than left
+--- as `table` because it is the boundary with an optional dependency: if
+--- luasocket's shape changes, the annotation is where it shows.
+---@class typer.Socket
+---@field receive fun(self: typer.Socket, pattern: string): string|nil, string|nil
+---@field send fun(self: typer.Socket, data: string): integer|nil, string|nil
+---@field close fun(self: typer.Socket)
+---@field settimeout fun(self: typer.Socket, seconds: number)
+---@field accept fun(self: typer.Socket): typer.Socket|nil
+---@field getsockname fun(self: typer.Socket): string, integer
+
+--- A request or response on the wire.
+---@class typer.DaemonMessage
+---@field command string|nil
+---@field paths string[]|nil
+---@field config string|nil
+---@field severity table<string, string>|nil
+---@field no_suppress boolean|nil
+---@field token string|nil
+---@field ok boolean|nil
+---@field error string|nil
+---@field stopped boolean|nil
+---@field port integer|nil
+---@field cached_files integer|nil
+---@field diagnostics typer.Diagnostic[]|nil
+---@field summary typer.Summary|nil
+
 ---@param config typer.Config
 ---@return string
 local function port_file(config)
@@ -48,7 +75,7 @@ end
 --- The payload is pretty-printed JSON and therefore multi-line, so neither side
 --- may `receive("*l")` once and call it a message -- but pretty-printed JSON
 --- never contains an *empty* line, which makes one a safe terminator.
----@param socket_handle table
+---@param socket_handle typer.Socket
 ---@return string|nil
 local function receive_message(socket_handle)
   ---@type string[]
@@ -64,14 +91,14 @@ local function receive_message(socket_handle)
   return table.concat(pieces, "\n")
 end
 
----@param socket_handle table
----@param payload table
+---@param socket_handle typer.Socket
+---@param payload typer.DaemonMessage
 local function send_message(socket_handle, payload)
   socket_handle:send(json.encode(payload) .. "\n\n")
 end
 
 --- Serves requests until idle timeout.
----@param args table
+---@param args typer.CliArgs
 ---@return integer
 local function serve(args)
   local ok, socket = pcall(require, "socket")
@@ -93,7 +120,7 @@ local function serve(args)
   io.write(("typer daemon listening on 127.0.0.1:%s\n"):format(port))
   io.flush()
 
-  ---@type table<string, table>
+  ---@type table<string, typer.ModelCacheEntry>
   local model_cache = {}
   server:settimeout(IDLE_TIMEOUT)
 
@@ -146,8 +173,8 @@ end
 
 --- Sends one request to a running daemon.
 ---@param config typer.Config
----@param payload table
----@return table|nil
+---@param payload typer.DaemonMessage
+---@return typer.DaemonMessage|nil
 ---@return string|nil
 local function request(config, payload)
   local ok, socket = pcall(require, "socket")
@@ -172,7 +199,7 @@ local function request(config, payload)
   return decoded, nil
 end
 
----@param args table
+---@param args typer.CliArgs
 ---@return integer
 function M.main(args)
   local cwd = fs.cwd()

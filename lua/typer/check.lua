@@ -23,6 +23,7 @@ local search_mod = require("typer.resolve.search")
 local modpath = require("typer.resolve.modpath")
 local cache_mod = require("typer.resolve.cache")
 
+---@type typer.Rule[]
 local RULES = {
   require("typer.rules.declarations"),
   require("typer.rules.functions"),
@@ -92,7 +93,7 @@ end
 ---@param path string
 ---@param role string
 ---@return typer.FileModel|nil
----@return table|nil parse_error
+---@return typer.LexError|nil parse_error
 local function load_model(run, path, role)
   local normalized = compat.absolute(path, run.cwd)
   local existing = run.models[normalized]
@@ -155,8 +156,7 @@ end
 ---@param run typer.Run
 ---@param model typer.FileModel
 ---@param role string
----@param report_site table|nil        -- checked file that pulled this in
-local function index_and_follow(run, model, role, report_site)
+local function index_and_follow(run, model, role)
   registry_mod.index_file(run.registry, model, {
     checked = role == "checked",
     is_stub = role == "stub" or model.is_meta,
@@ -172,7 +172,7 @@ local function index_and_follow(run, model, role, report_site)
       if not run.models[normalized] then
         local required, parse_error = load_model(run, normalized, resolution.role or "library")
         if required then
-          index_and_follow(run, required, resolution.role or "library", nil)
+          index_and_follow(run, required, resolution.role or "library")
         elseif parse_error and role == "checked" then
           -- A broken dependency must not stop us checking our own code.
           emit(run, diagnostic.new(model.path, entry, "untyped-module",
@@ -261,9 +261,9 @@ end
 
 --- Runs a check.
 ---@param paths string[]
----@param options table
+---@param options typer.CheckOptions
 ---@return typer.Diagnostic[]
----@return table summary
+---@return typer.Summary
 function M.run(paths, options)
   options = options or {}
 
@@ -313,7 +313,7 @@ function M.run(paths, options)
   end
 
   for _, model in ipairs(checked_models) do
-    index_and_follow(run, model, "checked", nil)
+    index_and_follow(run, model, "checked")
   end
 
   -- 3. Duplicate declarations across the whole index.
@@ -334,6 +334,7 @@ function M.run(paths, options)
   for _, model in ipairs(checked_models) do
     if not model.is_meta then
       local before = #run.diagnostics
+      ---@type typer.RuleContext
       local context = {
         config = config,
         registry = run.registry,
@@ -346,6 +347,7 @@ function M.run(paths, options)
       -- Suppression applies only to this file's own diagnostics.
       local suppressions = suppress.collect(model.chunk, model)
       if not options.no_suppress then
+        ---@type typer.Diagnostic[]
         local kept = {}
         for index = 1, before do kept[#kept + 1] = run.diagnostics[index] end
         for index = before + 1, #run.diagnostics do

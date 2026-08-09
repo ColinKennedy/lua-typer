@@ -50,7 +50,7 @@ end
 --- Loads `.typer.lua` in a sandbox. The file returns a table; it gets no I/O,
 --- no `os`, and no `require` -- config is data, not a program.
 ---@param path string
----@return table|nil
+---@return table<string, typer.PlainValue>|nil
 ---@return string|nil
 local function load_lua_config(path)
   local source = compat.read_file(path)
@@ -59,6 +59,7 @@ local function load_lua_config(path)
   local chunk, err = compat.load_string(source, "@" .. path)
   if not chunk then return nil, err end
 
+  ---@type table<string, (fun(...): ...)|table<string, (fun(...): ...)>>
   local sandbox = {
     pairs = pairs, ipairs = ipairs, next = next, type = type,
     tostring = tostring, tonumber = tonumber, string = string,
@@ -75,7 +76,7 @@ local function load_lua_config(path)
 end
 
 ---@param path string
----@return table|nil
+---@return table<string, typer.PlainValue>|nil
 ---@return string|nil
 local function load_json_config(path)
   local source = compat.read_file(path)
@@ -104,8 +105,8 @@ function M.discover(start)
   return nil
 end
 
----@param target table
----@param source table
+---@param target typer.Config
+---@param source table<string, typer.PlainValue>
 local function merge(target, source)
   for key, value in pairs(source) do
     if key == "severity" and type(value) == "table" then
@@ -127,6 +128,7 @@ function M.load(explicit_path, cwd)
   local path = explicit_path or M.discover(cwd)
 
   if path then
+    ---@type table<string, typer.PlainValue>|nil, string|nil
     local loaded, err
     if path:match("%.json$") then
       loaded, err = load_json_config(path)

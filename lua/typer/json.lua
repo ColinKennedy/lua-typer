@@ -6,6 +6,12 @@
 ---@class typer.json
 local M = {}
 
+--- Anything JSON can represent, recursively. This is the exact type of a
+--- serialisation boundary -- `any` would be giving up, and `---@generic` would
+--- be a lie, since nothing here is passed through unchanged.
+---@alias typer.PlainValue nil|boolean|number|string|typer.PlainValue[]|table<string, typer.PlainValue>
+
+---@type table<string, string>
 local ESCAPES = {
   ['"'] = '\\"', ["\\"] = "\\\\", ["\b"] = "\\b", ["\f"] = "\\f",
   ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t",
@@ -19,7 +25,7 @@ local function escape(str)
   end))
 end
 
----@param value any
+---@param value table<string|integer, typer.PlainValue>
 ---@return boolean
 local function is_array(value)
   local count = 0
@@ -30,9 +36,10 @@ local function is_array(value)
   return count == #value
 end
 
+---@type fun(value: typer.PlainValue, indent: string, out: string[])
 local encode_value
 
----@param value any
+---@param value typer.PlainValue
 ---@param indent string
 ---@param out string[]
 encode_value = function(value, indent, out)
@@ -83,7 +90,7 @@ encode_value = function(value, indent, out)
   end
 end
 
----@param value any
+---@param value typer.PlainValue
 ---@return string
 function M.encode(value)
   ---@type string[]
@@ -96,6 +103,7 @@ end
 ---@field text string
 ---@field pos integer
 
+---@type fun(decoder: typer.JsonDecoder): typer.PlainValue
 local decode_value
 
 ---@param decoder typer.JsonDecoder
@@ -108,6 +116,7 @@ end
 ---@return string
 local function decode_string(decoder)
   decoder.pos = decoder.pos + 1
+  ---@type string[]
   local pieces = {}
 
   while true do
@@ -142,13 +151,14 @@ local function decode_string(decoder)
 end
 
 ---@param decoder typer.JsonDecoder
----@return any
+---@return typer.PlainValue
 decode_value = function(decoder)
   skip_space(decoder)
   local char = decoder.text:sub(decoder.pos, decoder.pos)
 
   if char == "{" then
     decoder.pos = decoder.pos + 1
+    ---@type table<string, typer.PlainValue>
     local object = {}
     skip_space(decoder)
     if decoder.text:sub(decoder.pos, decoder.pos) == "}" then
@@ -173,6 +183,7 @@ decode_value = function(decoder)
 
   elseif char == "[" then
     decoder.pos = decoder.pos + 1
+    ---@type typer.PlainValue[]
     local array = {}
     skip_space(decoder)
     if decoder.text:sub(decoder.pos, decoder.pos) == "]" then
@@ -212,7 +223,7 @@ decode_value = function(decoder)
 end
 
 ---@param text string
----@return any|nil
+---@return typer.PlainValue|nil
 ---@return string|nil
 function M.decode(text)
   local ok, result = pcall(function()

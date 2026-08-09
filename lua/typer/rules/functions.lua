@@ -110,21 +110,18 @@ function M.run(model, ctx)
                             end
                         end
                         if not matches_some then
+                            local detail = ("---@param '%s' does not match parameter '%s'"):format(
+                                positional.name,
+                                param.name
+                            )
                             ctx.emit(
-                                diagnostic.new(
-                                    model.path,
-                                    {
-                                        l = positional.l,
-                                        c = positional.name_col or positional.c,
-                                        ec = positional.name_ec,
-                                    },
-                                    "param-name-mismatch",
-                                    ("---@param '%s' does not match parameter '%s'"):format(
-                                        positional.name,
-                                        param.name
-                                    ),
-                                    ("---@param %s <type>"):format(param.name)
-                                )
+                                diagnostic.new(model.path, {
+                                    l = positional.l,
+                                    c = positional.name_col or positional.c,
+                                    ec = positional.name_ec,
+                                }, "param-name-mismatch", detail, ("---@param %s <type>"):format(
+                                    param.name
+                                ))
                             )
                         end
                     end

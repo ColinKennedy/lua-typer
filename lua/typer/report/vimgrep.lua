@@ -6,10 +6,12 @@
 ---@class typer.report.vimgrep
 local M = {}
 
+--- `_summary` is part of the reporter signature, but vimgrep output is one
+--- line per diagnostic and nothing else: a trailing count would not parse.
 ---@param diagnostics typer.Diagnostic[]
----@param summary typer.Summary
+---@param _summary typer.Summary
 ---@return string
-function M.render(diagnostics, summary)
+function M.render(diagnostics, _summary)
     ---@type string[]
     local lines = {}
 

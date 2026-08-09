@@ -10,7 +10,7 @@ local byte, sub, find = string.byte, string.sub, string.find
 
 local B_NEWLINE, B_RETURN, B_SPACE, B_TAB = 10, 13, 32, 9
 local B_VTAB, B_FORMFEED = 11, 12
-local B_DASH, B_LBRACKET, B_RBRACKET, B_EQ = 45, 91, 93, 61
+local B_DASH, B_LBRACKET, B_EQ = 45, 91, 61
 local B_QUOTE, B_DQUOTE, B_BACKSLASH = 39, 34, 92
 local B_DOT, B_ZERO, B_NINE = 46, 48, 57
 local B_a, B_z, B_A, B_Z, B_UNDERSCORE = 97, 122, 65, 90, 95

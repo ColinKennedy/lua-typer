@@ -196,8 +196,12 @@ local function at_block_end(state)
     return token.t == "eof" or (token.t == "keyword" and BLOCK_ENDERS[token.v] == true)
 end
 
----@type (fun(state: typer.ParseState): typer.Node[]), (fun(state: typer.ParseState): typer.Node), (fun(state: typer.ParseState): typer.Node)
-local parse_block, parse_expression, parse_statement
+---@type fun(state: typer.ParseState): typer.Node[]
+local parse_block
+---@type fun(state: typer.ParseState): typer.Node
+local parse_expression
+---@type fun(state: typer.ParseState): typer.Node
+local parse_statement
 
 --- `function` body: parameter list plus block. `start_token` is the `function`
 --- keyword (or the name token for `local function`), used for the node span.

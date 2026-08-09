@@ -61,9 +61,6 @@ function M.signature(path)
     return ("%d:%d"):format(attributes.modification or 0, attributes.size or 0)
 end
 
----@type string[]|nil
-local find_cache = nil
-
 --- Lists `*.lua` files under a directory, recursively.
 ---@param root string
 ---@return string[]

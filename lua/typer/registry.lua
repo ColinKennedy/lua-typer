@@ -7,8 +7,6 @@
 ---@class typer.registry
 local M = {}
 
-local types = require("typer.annot.types")
-
 ---@class typer.TypeDecl
 ---@field name string
 ---@field kind "class"|"alias"|"enum"
@@ -103,9 +101,8 @@ local function index_tags(registry, tags, file, opts)
                 current_class.generics[generic] = true
             end
             insert(registry, current_class)
-            current_alias = nil
         elseif tag.kind == "alias" and tag.name then
-            current_alias = {
+            insert(registry, {
                 name = tag.name,
                 kind = "alias",
                 file = file,
@@ -119,8 +116,7 @@ local function index_tags(registry, tags, file, opts)
                 checked = opts.checked,
                 is_stub = opts.is_stub,
                 tag = tag,
-            }
-            insert(registry, current_alias)
+            })
             current_class = nil
         elseif tag.kind == "enum" and tag.name then
             insert(registry, {
@@ -137,7 +133,7 @@ local function index_tags(registry, tags, file, opts)
                 is_stub = opts.is_stub,
                 tag = tag,
             })
-            current_class, current_alias = nil, nil
+            current_class = nil
         elseif tag.kind == "field" and current_class and tag.name then
             current_class.fields[tag.name] = tag
         elseif tag.kind == "generic" then

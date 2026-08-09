@@ -26,66 +26,76 @@ local function is_annotated(binding)
     return true
 end
 
+---@param binding typer.Binding
+---@param model typer.FileModel
+---@param ctx typer.RuleContext
+local function check_binding(binding, model, ctx)
+    -- `_` is the conventional discard: the value is deliberately thrown away, so
+    -- there is nothing to annotate. Exactly `_`, never `_foo` (spec §4).
+    if binding.name == "_" then
+        return
+    end
+
+    local config = ctx.config
+
+    if binding.scope == "global" then
+        -- Globals cross files, so they need a declaration whatever their value.
+        if not is_annotated(binding) and config.strict_globals ~= false then
+            ctx.emit(
+                diagnostic.new(
+                    model.path,
+                    binding,
+                    "global-decl",
+                    ("global '%s' has no declaration"):format(binding.name),
+                    ("---@type <type>  (or ---@class %s)"):format(binding.name)
+                )
+            )
+        end
+    elseif binding.kind == "bare" then
+        if not is_annotated(binding) then
+            local code = binding.explicit_nil and "nil-decl" or "bare-decl"
+            local detail = binding.explicit_nil
+                    and ("local '%s' is initialised to nil and has no ---@type"):format(binding.name)
+                or ("local '%s' is declared without a value and has no ---@type"):format(binding.name)
+            ctx.emit(diagnostic.new(model.path, binding, code, detail, "---@type <type>"))
+        end
+    elseif binding.kind == "table" then
+        -- A class-shaped table gets `missing-class` instead: one defect, one
+        -- diagnostic, and the specific message is the actionable one.
+        if not is_annotated(binding) and not analyze.class_shape_reason(binding) then
+            ctx.emit(
+                diagnostic.new(
+                    model.path,
+                    binding,
+                    "table-decl",
+                    (
+                        "table '%s' has no ---@type or ---@class; inference cannot tell a "
+                        .. "literal shape from a class"
+                    ):format(binding.name),
+                    ("---@type table<K, V>  (or ---@class %s)"):format(binding.name)
+                )
+            )
+        end
+    elseif binding.kind == "scalar" then
+        if config.require_scalar_types and not is_annotated(binding) then
+            ctx.emit(
+                diagnostic.new(
+                    model.path,
+                    binding,
+                    "bare-decl",
+                    ("local '%s' has no ---@type"):format(binding.name),
+                    "---@type <type>"
+                )
+            )
+        end
+    end
+end
+
 ---@param model typer.FileModel
 ---@param ctx typer.RuleContext
 function M.run(model, ctx)
-    local config = ctx.config
-
     for _, binding in ipairs(model.bindings) do
-        -- `_` is the conventional discard; exactly `_`, never `_foo` (spec §4).
-        if binding.name == "_" then
-        -- nothing to annotate: the value is deliberately thrown away
-        elseif binding.scope == "global" then
-            -- Globals cross files, so they need a declaration whatever their value.
-            if not is_annotated(binding) and config.strict_globals ~= false then
-                ctx.emit(
-                    diagnostic.new(
-                        model.path,
-                        binding,
-                        "global-decl",
-                        ("global '%s' has no declaration"):format(binding.name),
-                        ("---@type <type>  (or ---@class %s)"):format(binding.name)
-                    )
-                )
-            end
-        elseif binding.kind == "bare" then
-            if not is_annotated(binding) then
-                local code = binding.explicit_nil and "nil-decl" or "bare-decl"
-                local detail = binding.explicit_nil
-                        and ("local '%s' is initialised to nil and has no ---@type"):format(binding.name)
-                    or ("local '%s' is declared without a value and has no ---@type"):format(binding.name)
-                ctx.emit(diagnostic.new(model.path, binding, code, detail, "---@type <type>"))
-            end
-        elseif binding.kind == "table" then
-            -- A class-shaped table gets `missing-class` instead: one defect, one
-            -- diagnostic, and the specific message is the actionable one.
-            if not is_annotated(binding) and not analyze.class_shape_reason(binding) then
-                ctx.emit(
-                    diagnostic.new(
-                        model.path,
-                        binding,
-                        "table-decl",
-                        (
-                            "table '%s' has no ---@type or ---@class; inference cannot tell a "
-                            .. "literal shape from a class"
-                        ):format(binding.name),
-                        ("---@type table<K, V>  (or ---@class %s)"):format(binding.name)
-                    )
-                )
-            end
-        elseif binding.kind == "scalar" then
-            if config.require_scalar_types and not is_annotated(binding) then
-                ctx.emit(
-                    diagnostic.new(
-                        model.path,
-                        binding,
-                        "bare-decl",
-                        ("local '%s' has no ---@type"):format(binding.name),
-                        "---@type <type>"
-                    )
-                )
-            end
-        end
+        check_binding(binding, model, ctx)
     end
 end
 

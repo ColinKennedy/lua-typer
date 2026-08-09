@@ -278,8 +278,12 @@ local function declare_meta_global(walker, target)
     model.bindings[#model.bindings + 1] = binding
 end
 
----@type (fun(walker: typer.Walker, block: typer.Node[])), (fun(walker: typer.Walker, node: typer.Node|nil, position: string|nil, tags: typer.Tag[]|nil)), (fun(walker: typer.Walker, node: typer.Node))
-local walk_block, walk_expr, walk_stat
+---@type fun(walker: typer.Walker, block: typer.Node[])
+local walk_block
+---@type fun(walker: typer.Walker, node: typer.Node|nil, position: string|nil, tags: typer.Tag[]|nil)
+local walk_expr
+---@type fun(walker: typer.Walker, node: typer.Node)
+local walk_stat
 
 --- Records a `Function` node. `owner` is the class binding for methods.
 ---@param walker typer.Walker

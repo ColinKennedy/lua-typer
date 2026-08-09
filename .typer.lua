@@ -14,4 +14,11 @@ return {
 
   -- Nothing here should depend on the host's installed rocks.
   inherit_path = false,
+
+  severity = {
+    -- Ships `off`, because for most projects naming the module table buys
+    -- nothing (see `analyze.is_namespace`). typer names every one of its own,
+    -- so it holds itself to the rule it does not impose.
+    ["namespace-decl"] = "error",
+  },
 }

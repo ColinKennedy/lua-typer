@@ -1,0 +1,5 @@
+spec/doubles_spec.lua:12:26: error: [return-arity-mismatch] function returns 2 values but 'exists_command' in module 'app.helpers' declares 1
+spec/doubles_spec.lua:18:24: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+spec/doubles_spec.lua:18:33: error: [missing-param] parameter 'value' has no ---@param annotation
+spec/doubles_spec.lua:23:20: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+spec/doubles_spec.lua:23:29: error: [missing-param] parameter 'alpha' has no ---@param annotation

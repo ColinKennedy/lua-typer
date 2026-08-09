@@ -1,0 +1,6 @@
+lua/app.lua:2:1: error: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+lua/app.lua:2:20: error: [missing-param] parameter 'value' has no ---@param annotation
+spec/loose_spec.lua:2:1: hint: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+spec/loose_spec.lua:2:21: hint: [missing-param] parameter 'value' has no ---@param annotation
+spec/strict_spec.lua:2:1: hint: [missing-return] function returns 1 value but declares 0 ---@return; 1 missing
+spec/strict_spec.lua:2:21: error: [missing-param] parameter 'value' has no ---@param annotation

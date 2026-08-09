@@ -1,0 +1,2 @@
+input.lua:46:5: error: [duplicate-param] ---@param '_' is annotated more than once; the last one wins
+input.lua:53:21: error: [missing-param] parameter 'count' has no ---@param annotation

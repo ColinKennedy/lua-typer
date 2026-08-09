@@ -23,12 +23,22 @@ local search_mod = require("typer.resolve.search")
 local modpath = require("typer.resolve.modpath")
 local cache_mod = require("typer.resolve.cache")
 
+local declaration_rules = require("typer.rules.declarations")
+local function_rules = require("typer.rules.functions")
+local class_rules = require("typer.rules.classes")
+local completeness_rules = require("typer.rules.completeness")
+local global_rules = require("typer.rules.globals")
+
+--- Every rule, named at its entry point rather than reached through the module
+--- table: a static list of functions is what lets deadcode and privata see that
+--- each `run` has a caller.
+---@type (fun(model: typer.FileModel, ctx: typer.RuleContext))[]
 local RULES = {
-  require("typer.rules.declarations"),
-  require("typer.rules.functions"),
-  require("typer.rules.classes"),
-  require("typer.rules.completeness"),
-  require("typer.rules.globals"),
+    declaration_rules.run,
+    function_rules.run,
+    class_rules.run,
+    completeness_rules.run,
+    global_rules.run,
 }
 
 ---@class typer.Run
@@ -38,6 +48,7 @@ local RULES = {
 ---@field diagnostics typer.Diagnostic[]
 ---@field models table<string, typer.FileModel>
 ---@field checked string[]
+---@field is_checked table<string, boolean>
 ---@field indexed_count integer
 ---@field cwd string
 ---@field cache typer.Cache
@@ -80,11 +91,12 @@ local RULES = {
 ---@field use_cache boolean|nil
 ---@field model_cache table<string, typer.ModelCacheEntry>|nil
 ---@field cwd string|nil
+---@field config_path string|nil
 
 ---@param run typer.Run
 ---@param diag typer.Diagnostic
 local function emit(run, diag)
-  run.diagnostics[#run.diagnostics + 1] = diag
+    run.diagnostics[#run.diagnostics + 1] = diag
 end
 
 --- Parses and analyses a file once, memoised by path.
@@ -92,109 +104,143 @@ end
 ---@param path string
 ---@param role string
 ---@return typer.FileModel|nil
----@return table|nil parse_error
+---@return typer.LexError|nil parse_error
 local function load_model(run, path, role)
-  local normalized = compat.absolute(path, run.cwd)
-  local existing = run.models[normalized]
-  if existing then return existing, nil end
+    local normalized = compat.absolute(path, run.cwd)
+    local existing = run.models[normalized]
+    if existing then
+        return existing, nil
+    end
 
-  -- A persistent cache (the daemon's) keeps parsed models across checks. The
-  -- file is re-validated every time, so an edited file always re-parses.
-  local persistent = run.model_cache
-  local entry = persistent and persistent[normalized] or nil
-  local signature = entry and fs.signature(normalized) or nil
+    -- A persistent cache (the daemon's) keeps parsed models across checks. The
+    -- file is re-validated every time, so an edited file always re-parses.
+    local persistent = run.model_cache
+    local entry = persistent and persistent[normalized] or nil
+    local signature = entry and fs.signature(normalized) or nil
 
-  if entry and signature and signature == entry.signature then
-    -- lfs present: one stat, no read at all.
-    run.models[normalized] = entry.model
+    if entry and signature and signature == entry.signature then
+        -- lfs present: one stat, no read at all.
+        run.models[normalized] = entry.model
+        run.indexed_count = run.indexed_count + 1
+        run.reused = (run.reused or 0) + 1
+        return entry.model, nil
+    end
+
+    local source = compat.read_file(normalized)
+    if not source then
+        if persistent then
+            persistent[normalized] = nil
+        end
+        return nil, nil
+    end
+
+    -- No lfs, so there is no cheap signature. Comparing the content we just read
+    -- is exact -- and reading is roughly two orders of magnitude cheaper than
+    -- parsing, which is the work the cache exists to avoid.
+    if entry and not signature and entry.source == source then
+        run.models[normalized] = entry.model
+        run.indexed_count = run.indexed_count + 1
+        run.reused = (run.reused or 0) + 1
+        return entry.model, nil
+    end
+
+    local chunk, err = parser.parse(source)
+    if not chunk then
+        if persistent then
+            persistent[normalized] = nil
+        end
+        return nil, err
+    end
+
+    local model = analyze.run(normalized, chunk)
+    model.role = role
+    model.source = source
+    run.models[normalized] = model
     run.indexed_count = run.indexed_count + 1
-    run.reused = (run.reused or 0) + 1
-    return entry.model, nil
-  end
 
-  local source = compat.read_file(normalized)
-  if not source then
-    if persistent then persistent[normalized] = nil end
-    return nil, nil
-  end
+    if persistent then
+        persistent[normalized] = {
+            model = model,
+            signature = fs.signature(normalized),
+            source = source,
+        }
+    end
 
-  -- No lfs, so there is no cheap signature. Comparing the content we just read
-  -- is exact -- and reading is roughly two orders of magnitude cheaper than
-  -- parsing, which is the work the cache exists to avoid.
-  if entry and not signature and entry.source == source then
-    run.models[normalized] = entry.model
-    run.indexed_count = run.indexed_count + 1
-    run.reused = (run.reused or 0) + 1
-    return entry.model, nil
-  end
-
-  local chunk, err = parser.parse(source)
-  if not chunk then
-    if persistent then persistent[normalized] = nil end
-    return nil, err
-  end
-
-  local model = analyze.run(normalized, chunk)
-  model.role = role
-  model.source = source
-  run.models[normalized] = model
-  run.indexed_count = run.indexed_count + 1
-
-  if persistent then
-    persistent[normalized] = {
-      model = model,
-      signature = fs.signature(normalized),
-      source = source,
-    }
-  end
-
-  return model, nil
+    return model, nil
 end
 
 --- Indexes a model's declarations, then follows its `require`s.
 ---@param run typer.Run
 ---@param model typer.FileModel
 ---@param role string
----@param report_site table|nil        -- checked file that pulled this in
-local function index_and_follow(run, model, role, report_site)
-  registry_mod.index_file(run.registry, model, {
-    checked = role == "checked",
-    is_stub = role == "stub" or model.is_meta,
-  })
+local function index_and_follow(run, model, role)
+    registry_mod.index_file(run.registry, model, {
+        checked = role == "checked",
+        is_stub = role == "stub" or model.is_meta,
+    })
 
-  if run.config.follow_requires == "skip" then return end
-
-  for _, entry in ipairs(model.requires) do
-    local resolution = modpath.resolve(run.search, entry.module)
-
-    if resolution.kind == "lua" then
-      local normalized = compat.absolute(resolution.path, run.cwd)
-      if not run.models[normalized] then
-        local required, parse_error = load_model(run, normalized, resolution.role or "library")
-        if required then
-          index_and_follow(run, required, resolution.role or "library", nil)
-        elseif parse_error and role == "checked" then
-          -- A broken dependency must not stop us checking our own code.
-          emit(run, diagnostic.new(model.path, entry, "untyped-module",
-            ("module '%s' could not be parsed (%s:%d:%d: %s)"):format(
-              entry.module, normalized, parse_error.l, parse_error.c, parse_error.msg),
-            nil))
-        end
-      end
-
-    elseif role == "checked" and not config_mod.ignores_module(run.config, entry.module) then
-      if resolution.kind == "c" then
-        emit(run, diagnostic.new(model.path, entry, "untyped-module",
-          ("module '%s' is a C module; typer cannot read annotations from it")
-            :format(entry.module),
-          "write a ---@meta stub and put it on stub_paths"))
-      else
-        emit(run, diagnostic.new(model.path, entry, "unresolved-module",
-          ("module '%s' was not found on the search path"):format(entry.module),
-          "fix the path, or add it to ignore_missing"))
-      end
+    if run.config.follow_requires == "skip" then
+        return
     end
-  end
+
+    for _, entry in ipairs(model.requires) do
+        local resolution = modpath.resolve(run.search, entry.module)
+
+        if resolution.kind == "lua" then
+            local normalized = compat.absolute(resolution.path, run.cwd)
+            -- Remember where the module landed: `mod.f = function() end` in
+            -- another file has to reach that file's exported signature.
+            registry_mod.bind_module(run.registry, entry.module, normalized)
+            if not run.models[normalized] then
+                local required, parse_error = load_model(run, normalized, resolution.role or "library")
+                if required then
+                    index_and_follow(run, required, resolution.role or "library")
+                elseif parse_error and role == "checked" then
+                    -- A broken dependency must not stop us checking our own code.
+                    emit(
+                        run,
+                        diagnostic.new(
+                            model.path,
+                            entry,
+                            "untyped-module",
+                            ("module '%s' could not be parsed (%s:%d:%d: %s)"):format(
+                                entry.module,
+                                normalized,
+                                parse_error.l,
+                                parse_error.c,
+                                parse_error.msg
+                            ),
+                            nil
+                        )
+                    )
+                end
+            end
+        elseif role == "checked" and not config_mod.ignores_module(run.config, entry.module) then
+            if resolution.kind == "c" then
+                emit(
+                    run,
+                    diagnostic.new(
+                        model.path,
+                        entry,
+                        "untyped-module",
+                        ("module '%s' is a C module; typer cannot read annotations from it"):format(entry.module),
+                        "write a ---@meta stub and put it on stub_paths"
+                    )
+                )
+            else
+                emit(
+                    run,
+                    diagnostic.new(
+                        model.path,
+                        entry,
+                        "unresolved-module",
+                        ("module '%s' was not found on the search path"):format(entry.module),
+                        "fix the path, or add it to ignore_missing"
+                    )
+                )
+            end
+        end
+    end
 end
 
 --- Expands command-line paths into a list of `.lua` files.
@@ -203,192 +249,310 @@ end
 ---@param cwd string
 ---@return string[]
 local function expand_targets(paths, config, cwd)
-  ---@type string[]
-  local out = {}
-  ---@type table<string, boolean>
-  local seen = {}
+    ---@type string[]
+    local out = {}
+    ---@type table<string, boolean>
+    local seen = {}
 
-  for _, path in ipairs(paths) do
-    local normalized = compat.absolute(path, cwd)
-    if fs.is_dir(normalized) then
-      for _, file in ipairs(fs.list_lua(normalized)) do
-        local absolute = compat.absolute(file, cwd)
-        if not seen[absolute] and not config_mod.is_excluded(config, absolute) then
-          seen[absolute] = true
-          out[#out + 1] = absolute
+    for _, path in ipairs(paths) do
+        local normalized = compat.absolute(path, cwd)
+        if fs.is_dir(normalized) then
+            for _, file in ipairs(fs.list_lua(normalized)) do
+                local absolute = compat.absolute(file, cwd)
+                if not seen[absolute] and not config_mod.is_excluded(config, absolute) then
+                    seen[absolute] = true
+                    out[#out + 1] = absolute
+                end
+            end
+        elseif not seen[normalized] then
+            seen[normalized] = true
+            if not config_mod.is_excluded(config, normalized) then
+                out[#out + 1] = normalized
+            end
         end
-      end
-    elseif not seen[normalized] then
-      seen[normalized] = true
-      if not config_mod.is_excluded(config, normalized) then
-        out[#out + 1] = normalized
-      end
     end
-  end
 
-  table.sort(out)
-  return out
+    table.sort(out)
+    return out
+end
+
+--- Folds one workspace file into the index, from the on-disk cache when its
+--- slice is still valid and by parsing it otherwise. This is the path the cache
+--- exists for: the eager scan below reads every file in the workspace purely to
+--- harvest ambient declarations, and re-parsing them each run is the cost.
+---
+--- Files being checked never take the cached path -- they are parsed anyway, for
+--- the rules -- so a cached slice is always an unchecked one.
+---@param run typer.Run
+---@param path string
+---@param role string
+local function index_workspace_file(run, path, role)
+    if run.registry.indexed[path] then
+        return
+    end
+
+    if not run.is_checked[path] then
+        local cached = cache_mod.get(run.cache, path)
+        if cached and cached.slice then
+            registry_mod.index_slice(run.registry, path, cached.slice, {
+                checked = false,
+                is_stub = role == "stub" or cached.slice.is_meta,
+            })
+            run.indexed_count = run.indexed_count + 1
+            return
+        end
+    end
+
+    local model = load_model(run, path, role)
+    if not model then
+        return
+    end
+
+    local slice = registry_mod.slice_of(model)
+    registry_mod.index_slice(run.registry, path, slice, {
+        checked = false,
+        is_stub = role == "stub" or model.is_meta,
+    })
+
+    if not run.is_checked[path] then
+        cache_mod.put(run.cache, path, { slice = slice })
+    end
+end
+
+--- The module name a file answers to, given the search-path directory it was
+--- found under: the inverse of `modpath.resolve`.
+---
+--- Worth computing for every scanned file, not just the ones something
+--- `require`s, because a global table is routinely the same namespace as a
+--- module -- `vim.lsp.get_clients` is `get_clients` in `vim/lsp.lua`. Without
+--- the name, a re-assignment to that global cannot be traced to the signature
+--- it overrides.
+---@param dir string
+---@param file string
+---@return string|nil
+local function module_name_of(dir, file)
+    local relative = file:sub(#dir + 2)
+    if file:sub(1, #dir + 1) ~= dir .. "/" or relative == "" then
+        return nil
+    end
+
+    local stem = relative:gsub("%.lua$", ""):gsub("/", ".")
+    -- `a/b/init.lua` is the module `a.b`, exactly as the `?/init.lua` pattern
+    -- that found it says.
+    return (stem:gsub("%.init$", ""))
 end
 
 --- Eagerly indexes the workspace: ambient `---@class` declarations may live in
 --- files that nothing requires, so lazy loading alone would miss them.
 ---@param run typer.Run
 local function index_workspace(run)
-  ---@type table<string, boolean>
-  local seen = {}
+    ---@type table<string, boolean>
+    local seen = {}
 
-  for _, entry in ipairs(run.search.entries) do
-    if entry.role == "workspace" or entry.role == "stub" then
-      local dir = entry.pattern:match("^(.*)/%?")
-      if dir and not seen[dir] and fs.is_dir(dir) then
-        seen[dir] = true
-        for _, file in ipairs(fs.list_lua(dir)) do
-          local absolute = compat.absolute(file, run.cwd)
-          if not run.models[absolute] and not config_mod.is_excluded(run.config, absolute) then
-            local model = load_model(run, absolute, entry.role)
-            if model then
-              registry_mod.index_file(run.registry, model, {
-                checked = false,
-                is_stub = entry.role == "stub" or model.is_meta,
-              })
+    for _, entry in ipairs(run.search.entries) do
+        if entry.role == "workspace" or entry.role == "stub" or entry.eager then
+            local dir = entry.pattern:match("^(.*)/%?")
+            if dir and not seen[dir] and fs.is_dir(dir) then
+                seen[dir] = true
+                for _, file in ipairs(fs.list_lua(dir)) do
+                    local absolute = compat.absolute(file, run.cwd)
+                    if not run.models[absolute] and not config_mod.is_excluded(run.config, absolute) then
+                        local module = module_name_of(dir, absolute)
+                        if module then
+                            registry_mod.bind_module(run.registry, module, absolute)
+                        end
+                        index_workspace_file(run, absolute, entry.role)
+                    end
+                end
             end
-          end
         end
-      end
     end
-  end
 end
 
 --- Runs a check.
 ---@param paths string[]
----@param options table
+---@param options typer.CheckOptions
 ---@return typer.Diagnostic[]
----@return table summary
+---@return typer.Summary
 function M.run(paths, options)
-  options = options or {}
+    options = options or {}
 
-  local config = options.config or config_mod.defaults()
-  local search = search_mod.build(config, {
-    stub_paths = options.stub_paths,
-    lua_path = options.lua_path,
-    inherit_path = options.inherit_path,
-  })
+    local config = options.config or config_mod.defaults()
+    local search = search_mod.build(config, {
+        stub_paths = options.stub_paths,
+        lua_path = options.lua_path,
+        inherit_path = options.inherit_path,
+    })
 
-  ---@type typer.Run
-  local run = {
-    config = config,
-    search = search,
-    registry = registry_mod.new(),
-    diagnostics = {},
-    models = {},
-    checked = {},
-    indexed_count = 0,
-    cache = cache_mod.open(config, options.use_cache ~= false),
-    model_cache = options.model_cache,
-    cwd = options.cwd or fs.cwd(),
-  }
-
-  local targets = expand_targets(paths, config, run.cwd)
-
-  ---@type table<string, boolean>
-  local is_checked = {}
-  for _, path in ipairs(targets) do is_checked[path] = true end
-
-  -- 1. Ambient declarations from the workspace and stubs.
-  index_workspace(run)
-
-  -- 2. Checked files, plus everything they require.
-  ---@type typer.FileModel[]
-  local checked_models = {}
-  for _, path in ipairs(targets) do
-    local model, parse_error = load_model(run, path, "checked")
-    if parse_error then
-      emit(run, diagnostic.new(path, { l = parse_error.l, c = parse_error.c },
-        "parse-error", parse_error.msg, nil))
-      run.had_parse_error = true
-    elseif model then
-      model.role = "checked"
-      checked_models[#checked_models + 1] = model
-    end
-  end
-
-  for _, model in ipairs(checked_models) do
-    index_and_follow(run, model, "checked", nil)
-  end
-
-  -- 3. Duplicate declarations across the whole index.
-  for _, pair in ipairs(run.registry.duplicates) do
-    for _, side in ipairs({ pair.first, pair.second }) do
-      if is_checked[side.file] then
-        emit(run, diagnostic.new(side.file, side, "duplicate-class",
-          ("'%s' is declared in both %s:%d and %s:%d"):format(
-            side.name,
-            compat.relative(pair.first.file, run.cwd), pair.first.l,
-            compat.relative(pair.second.file, run.cwd), pair.second.l),
-          "rename one of them"))
-      end
-    end
-  end
-
-  -- 4. Rules, on checked files only.
-  for _, model in ipairs(checked_models) do
-    if not model.is_meta then
-      local before = #run.diagnostics
-      local context = {
+    ---@type typer.Run
+    local run = {
         config = config,
-        registry = run.registry,
-        emit = function(diag) emit(run, diag) end,
-      }
-      for _, rule in ipairs(RULES) do
-        rule.run(model, context)
-      end
+        search = search,
+        registry = registry_mod.new(),
+        diagnostics = {},
+        models = {},
+        checked = {},
+        is_checked = {},
+        indexed_count = 0,
+        cache = cache_mod.open(config, options.use_cache ~= false),
+        model_cache = options.model_cache,
+        cwd = options.cwd or fs.cwd(),
+    }
 
-      -- Suppression applies only to this file's own diagnostics.
-      local suppressions = suppress.collect(model.chunk, model)
-      if not options.no_suppress then
-        local kept = {}
-        for index = 1, before do kept[#kept + 1] = run.diagnostics[index] end
-        for index = before + 1, #run.diagnostics do
-          local diag = run.diagnostics[index]
-          if not suppress.is_suppressed(suppressions, diag) then
-            kept[#kept + 1] = diag
-          end
+    local targets = expand_targets(paths, config, run.cwd)
+
+    ---@type table<string, boolean>
+    local is_checked = run.is_checked
+    for _, path in ipairs(targets) do
+        is_checked[path] = true
+    end
+
+    -- 1. Ambient declarations from the workspace and stubs.
+    index_workspace(run)
+
+    -- 2. Checked files, plus everything they require.
+    ---@type typer.FileModel[]
+    local checked_models = {}
+    for _, path in ipairs(targets) do
+        local model, parse_error = load_model(run, path, "checked")
+        if parse_error then
+            emit(
+                run,
+                diagnostic.new(path, { l = parse_error.l, c = parse_error.c }, "parse-error", parse_error.msg, nil)
+            )
+            run.had_parse_error = true
+        elseif model then
+            model.role = "checked"
+            checked_models[#checked_models + 1] = model
         end
+    end
+
+    for _, model in ipairs(checked_models) do
+        index_and_follow(run, model, "checked")
+    end
+
+    -- 3. Duplicate declarations across the whole index.
+    for _, pair in ipairs(run.registry.duplicates) do
+        for _, side in ipairs({ pair.first, pair.second }) do
+            if is_checked[side.file] then
+                emit(
+                    run,
+                    diagnostic.new(
+                        side.file,
+                        side,
+                        "duplicate-class",
+                        ("'%s' is declared in both %s:%d and %s:%d"):format(
+                            side.name,
+                            compat.relative(pair.first.file, run.cwd),
+                            pair.first.l,
+                            compat.relative(pair.second.file, run.cwd),
+                            pair.second.l
+                        ),
+                        "rename one of them"
+                    )
+                )
+            end
+        end
+    end
+
+    -- 4. Rules, on checked files only.
+    ---@type table<string, typer.Suppressions>
+    local suppressions_by_file = {}
+
+    for _, model in ipairs(checked_models) do
+        if not model.is_meta then
+            ---@type typer.RuleContext
+            local context = {
+                config = config,
+                registry = run.registry,
+                emit = function(diag)
+                    emit(run, diag)
+                end,
+            }
+            for _, run_rule in ipairs(RULES) do
+                run_rule(model, context)
+            end
+
+            suppressions_by_file[model.path] = suppress.collect(model.chunk, model)
+        end
+    end
+
+    -- 5. Suppression, over every diagnostic reported against a checked file --
+    -- not just the ones its rules produced. `unresolved-module` and
+    -- `duplicate-class` are raised while the index is being built, long before
+    -- the file's own rules run, and a `-- typer: ignore` has to reach them too.
+    if not options.no_suppress then
+        ---@type typer.Diagnostic[]
+        local kept = {}
+        for _, diag in ipairs(run.diagnostics) do
+            local suppressions = suppressions_by_file[diag.file]
+            if not (suppressions and suppress.is_suppressed(suppressions, diag)) then
+                kept[#kept + 1] = diag
+            end
+        end
+
+        -- Which directives went unused is only knowable once every diagnostic
+        -- above has had its chance to match one.
+        --
+        -- These are suppressible in turn -- `-- typer: ignore-file` reaches
+        -- them, as does turning `unused-ignore` off for a path -- but they are
+        -- not fed back into the used/unused tally, which would only chase its
+        -- own tail. Line-scoped directives cannot reach them at all: an
+        -- `unused-ignore` is anchored on a comment, and both `ignore` and
+        -- `ignore-next-line` aim at the next *code* below them. That is the
+        -- intended shape. The answer to a dead suppression is to delete it.
+        for _, model in ipairs(checked_models) do
+            local suppressions = suppressions_by_file[model.path]
+            if suppressions then
+                for _, diag in ipairs(suppress.unused(suppressions, model.path)) do
+                    if not suppress.is_suppressed(suppressions, diag) then
+                        kept[#kept + 1] = diag
+                    end
+                end
+            end
+        end
+
         run.diagnostics = kept
-      end
     end
-  end
 
-  -- 5. Severity overrides, dropping anything switched off.
-  ---@type typer.Diagnostic[]
-  local final = {}
-  local errors, warnings, hints = 0, 0, 0
+    -- 6. Severity overrides, dropping anything switched off.
+    ---@type typer.Diagnostic[]
+    local final = {}
+    local errors, warnings, hints = 0, 0, 0
 
-  for _, diag in ipairs(run.diagnostics) do
-    local severity = config_mod.severity_of(config, diag.code)
-    if severity ~= "off" then
-      diag.severity = severity
-      -- Paths are absolute internally, for identity; they are reported relative
-      -- to the working directory, because that is what an editor wants to open.
-      diag.file = compat.relative(diag.file, run.cwd)
-      final[#final + 1] = diag
-      if severity == "error" then errors = errors + 1
-      elseif severity == "warning" then warnings = warnings + 1
-      else hints = hints + 1 end
+    for _, diag in ipairs(run.diagnostics) do
+        -- Per-path rules are written against the project, so they are matched
+        -- against the path relative to the config -- not to wherever typer
+        -- happened to be invoked from.
+        local severity = config_mod.severity_of(config, diag.code, compat.relative(diag.file, config.root))
+        if severity ~= "off" then
+            diag.severity = severity
+            -- Paths are absolute internally, for identity; they are reported relative
+            -- to the working directory, because that is what an editor wants to open.
+            diag.file = compat.relative(diag.file, run.cwd)
+            final[#final + 1] = diag
+            if severity == "error" then
+                errors = errors + 1
+            elseif severity == "warning" then
+                warnings = warnings + 1
+            else
+                hints = hints + 1
+            end
+        end
     end
-  end
 
-  table.sort(final, diagnostic.compare)
-  cache_mod.save(run.cache)
+    table.sort(final, diagnostic.compare)
+    cache_mod.save(run.cache)
 
-  return final, {
-    files = #targets,
-    indexed = run.indexed_count,
-    errors = errors,
-    warnings = warnings,
-    hints = hints,
-    had_parse_error = run.had_parse_error or false,
-  }
+    return final,
+        {
+            files = #targets,
+            indexed = run.indexed_count,
+            errors = errors,
+            warnings = warnings,
+            hints = hints,
+            had_parse_error = run.had_parse_error or false,
+        }
 end
 
 return M

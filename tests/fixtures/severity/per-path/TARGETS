@@ -1,0 +1,3 @@
+lua/app.lua
+spec/loose_spec.lua
+spec/strict_spec.lua

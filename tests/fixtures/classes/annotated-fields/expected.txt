@@ -1,0 +1,1 @@
+input.lua:14:10: error: [missing-field] field 'state' is assigned on class 'Registry' but has no ---@field

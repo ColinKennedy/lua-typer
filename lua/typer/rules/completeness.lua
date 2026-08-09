@@ -11,6 +11,7 @@
 local M = {}
 
 local diagnostic = require("typer.diagnostic")
+local docblock = require("typer.docblock")
 local types = require("typer.annot.types")
 local registry_mod = require("typer.registry")
 
@@ -112,6 +113,25 @@ local function check_node(model, ctx, node, scope)
     end
 end
 
+--- `---@param _ any` on a discarded parameter is the one place `any` says
+--- something true: the value is thrown away, so there is no real type to state
+--- and no pass-through generic to reach for. Omitting the line entirely is
+--- equally valid (see `docblock.is_placeholder`); this keeps the explicit
+--- spelling from being the worse of the two.
+---
+--- Only the bare form is excused. `---@param _ table<string, any>` still has to
+--- say what it holds -- there the `any` is describing a value that survives.
+---@param tag typer.Tag
+---@return boolean
+local function is_documented_discard(tag)
+    return tag.kind == "param"
+        and tag.name ~= nil
+        and docblock.is_placeholder(tag.name)
+        and tag.type ~= nil
+        and tag.type.k == "name"
+        and (tag.type.name == "any" or tag.type.name == "unknown")
+end
+
 ---@param model typer.FileModel
 ---@param ctx typer.RuleContext
 function M.run(model, ctx)
@@ -126,7 +146,7 @@ function M.run(model, ctx)
                 )
             end
 
-            if TYPED_TAGS[tag.kind] then
+            if TYPED_TAGS[tag.kind] and not is_documented_discard(tag) then
                 ---@type typer.TypeNode[]
                 local checked = {}
                 if tag.list then

@@ -1,0 +1,1 @@
+input.lua:4:26: error: [missing-param-placeholder] parameter '_' has no ---@param annotation

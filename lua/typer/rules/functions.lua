@@ -31,6 +31,24 @@ function M.run(model, ctx)
             local by_name = {}
             for _, tag in ipairs(param_tags) do
                 if tag.name then
+                    -- `---@param` binds by name, not by position, so a second line
+                    -- with the same name lands on the same parameter: the last one
+                    -- wins and the earlier is silently lost. Two `---@param _` on a
+                    -- `function(_, _, cb)` is the usual way to hit this -- both
+                    -- describe the first `_` and the second is left undocumented.
+                    if by_name[tag.name] then
+                        ctx.emit(
+                            diagnostic.new(
+                                model.path,
+                                { l = tag.l, c = tag.name_col or tag.c, ec = tag.name_ec },
+                                "duplicate-param",
+                                ("---@param '%s' is annotated more than once; the last one wins"):format(tag.name),
+                                tag.name:sub(1, 1) == "_"
+                                        and "name the placeholders '_a', '_b', ... so each can be documented"
+                                    or nil
+                            )
+                        )
+                    end
                     by_name[tag.name] = tag
                 end
             end
@@ -88,7 +106,7 @@ function M.run(model, ctx)
                             diagnostic.new(
                                 model.path,
                                 param,
-                                "missing-param",
+                                docblock.is_placeholder(param.name) and "missing-param-placeholder" or "missing-param",
                                 ("parameter '%s' has no ---@param annotation"):format(param.name),
                                 ("---@param %s <type>"):format(param.name)
                             )

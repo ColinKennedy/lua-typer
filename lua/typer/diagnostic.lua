@@ -14,10 +14,14 @@ M.DEFAULT_SEVERITY = {
     ["undefined-global"] = "error",
     -- functions
     ["missing-param"] = "error",
+    -- Placeholders (`self`, `_`, `_a`, ...) are exempt the way LuaLS exempts
+    -- them; this is the opt-in that takes the exemption away.
+    ["missing-param-placeholder"] = "off",
     ["missing-vararg"] = "error",
     ["missing-return"] = "error",
     ["param-name-mismatch"] = "error",
     ["param-arity-mismatch"] = "error",
+    ["duplicate-param"] = "error",
     ["return-arity-mismatch"] = "error",
     ["self-param"] = "error",
     ["optional-param"] = "off",

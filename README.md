@@ -71,6 +71,7 @@ Scalars are exempt — `local x = 5` has no such ambiguity.
 | `missing-param` / `missing-vararg` | a parameter, or `...`, with no `---@param` |
 | `missing-return` | fewer `---@return` than the function's widest return arity |
 | `param-name-mismatch` / `param-arity-mismatch` / `return-arity-mismatch` | annotations disagree with the signature |
+| `duplicate-param` | two `---@param` lines name the same parameter |
 | `self-param` | `---@param self` on a `:` method |
 | `missing-class` | a class-shaped table with no `---@class` |
 | `missing-field` | a data field assigned on a class with no `---@field` |
@@ -87,6 +88,38 @@ used as a metatable, or has fields assigned on `self`.
 Methods are exempt from `---@field`: a `function T:foo()` with its own
 `---@param`/`---@return` already describes itself, and a duplicate `---@field`
 would only drift.
+
+### Discarded parameters
+
+Parameters named `self`, `_`, or `_a` / `_b` / … are exempt from
+`missing-param`, matching lua-language-server: both of the diagnostics that
+would otherwise demand an annotation there — `incomplete-signature-doc` and
+`missing-doc-param` — hard-skip exactly those names.
+
+```lua
+---@param callback fun(count: integer): nil
+Editor.count_async = function(_, callback)   -- `_` is a discarded `self`
+    callback(20)
+end
+```
+
+Annotating one is still supported and still checked: `---@param _ string` types
+the call site like any other parameter. `---@param _ any` is accepted too — on a
+value the body throws away there is no real type to state, and no pass-through
+generic to reach for. Only the bare form is excused; `---@param _ table<string,
+any>` still has to say what it holds.
+
+`---@param` binds by **name**, not by position, so two `---@param _` lines both
+land on the *first* `_` and the second parameter silently stays undocumented.
+typer reports that as `duplicate-param` (LuaLS: `duplicate-doc-param`); the fix
+is distinct names, which is what `_a` / `_b` are for.
+
+For the stricter reading — every parameter annotated, placeholders included —
+turn on the opt-in code:
+
+```lua
+severity = { ["missing-param-placeholder"] = "error" }
+```
 
 ## Cross-file types
 

@@ -140,6 +140,26 @@ function M.tags_for(index, node)
     return out
 end
 
+--- Parameter names that stand for a value the body deliberately discards, and
+--- so are never *required* to carry a `---@param`.
+---
+--- This is the line LuaLS itself draws: both diagnostics that would otherwise
+--- demand an annotation -- `incomplete-signature-doc` and `missing-doc-param`
+--- -- hard-skip arguments named `self` or `_`. `_a`, `_b`, ... are included
+--- because a signature with two placeholders has no other spelling: two
+--- `---@param _` lines both bind to the *first* `_`, which LuaLS reports as
+--- `duplicate-doc-param`, so distinct names are the only way to document them
+--- all.
+---
+--- Annotating one anyway stays supported and stays checked -- `---@param _
+--- string` types the call site exactly like any other parameter. Only the
+--- *demand* moves, to `missing-param-placeholder`, which is `off` by default.
+---@param name string
+---@return boolean
+function M.is_placeholder(name)
+    return name == "self" or name:sub(1, 1) == "_"
+end
+
 --- Collects every tag of a given kind, in source order.
 ---@param tags typer.Tag[]
 ---@param kind string

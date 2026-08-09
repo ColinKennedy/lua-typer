@@ -13,7 +13,10 @@ local M = {}
 local compat = require("typer.compat")
 local fs = require("typer.fs")
 
-local FORMAT_VERSION = 1
+--- Bumped whenever `typer.IndexSlice` gains or loses a field: an entry written
+--- by an older typer would load without the new ones and quietly answer
+--- differently from a cold run, which is the one failure a cache must not have.
+local FORMAT_VERSION = 2
 
 --- One cached file's declaration slice, keyed by its `mtime:size` signature.
 ---@class typer.CacheEntry

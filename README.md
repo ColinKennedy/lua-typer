@@ -36,15 +36,66 @@ typer itself runs on Lua 5.1–5.4 and LuaJIT.
 
 ## The governing principle
 
-> **Anything that gets a name must be annotated. Anything inline inherits its
-> type from context.**
+> **Anything that gets a name must be annotated. Anything that lands in a slot
+> with a declared type inherits it.**
 
 ```lua
-local f = function() end          -- named  -> needs ---@param / ---@return
+local f = function() end          -- new name -> needs ---@param / ---@return
 vim.keymap.set("n", "x", function() end)  -- inline -> typed by the callee
-local t = {}                      -- named  -> needs ---@type or ---@class
+local t = {}                      -- new name -> needs ---@type or ---@class
 f({ a = 1 })                      -- inline -> typed by the callee
+
+vim.notify = function(msg, level) -- overwrites a slot that is already typed
+    original(msg, level)          -- -> inherits it, nothing to add
+end
 ```
+
+### Declaring versus overwriting
+
+Inheriting a type is not about where an expression *sits* — it is about whether
+the slot it lands in **already has a declared type**. Declaring `M.helper` for
+the first time needs annotations, because nothing else knows what it is.
+Overwriting `vim.notify`, or monkeypatching an annotated module function in a
+test, does not: the signature is already stated somewhere typer has read, and
+typer does not verify assignments, so a second copy of it here is duplication
+that cannot be checked and drift that cannot be caught.
+
+Five ways a slot arrives already typed:
+
+```lua
+---@type fun(name: string): nil
+local callback
+callback = function(name) end                 -- the local's ---@type
+
+---@param seam? fun(n: string): nil
+function M.setup(seam)
+    seam = seam or function(n) end            -- the parameter's ---@param
+end
+
+---@param x string
+---@return string
+function M.echo(x) return x end
+M.echo = function(x) return x .. "!" end      -- an earlier definition
+
+helpers.get_root = function(buffer) end       -- a required module's export
+vim.fn.jobstart = function(cmd, opts) end     -- a global-rooted name
+```
+
+What does *not* stand down is the return arity — the declaration says how many
+values come back, and a body returning more contradicts it:
+
+```lua
+---@return fun(): [integer, string]?   -- one value: a tuple
+function M.iterate(values)
+    return function()
+        return index, values[index]    -- two. return-arity-mismatch, correctly
+    end
+end
+```
+
+Nor does a half-written doc block: an inherited signature stands in for
+annotations that are *absent*, so the moment one `---@param` appears the ordinary
+rules take over and the block has to be complete.
 
 ### Why inference is not enough
 
@@ -66,6 +117,7 @@ Scalars are exempt — `local x = 5` has no such ambiguity.
 |---|---|
 | `bare-decl` / `nil-decl` | `local foo` / `local foo = nil` with no `---@type` |
 | `table-decl` | a table constructor bound to a name, unannotated |
+| `namespace-decl` | a table whose every member is a function — the `local M = {}` module preamble (**off** by default) |
 | `global-decl` | assignment to an undeclared global, whatever its value |
 | `undefined-global` | *reading* a global that resolves to nothing |
 | `missing-param` / `missing-vararg` | a parameter, or `...`, with no `---@param` |
@@ -82,8 +134,26 @@ Scalars are exempt — `local x = 5` has no such ambiguity.
 | `unresolved-module` / `untyped-module` | `require` that resolves to nothing, or to a C module |
 | `duplicate-class` | the same class name declared in two files |
 
-A **class-shaped** table is one that defines `:` methods, assigns `__index`, is
-used as a metatable, or has fields assigned on `self`.
+A **class-shaped** table is one that defines `:` methods, assigns a *table* to
+`__index`, is used as a metatable, or has fields assigned on `self`.
+
+`__index` counts only when a table is on the right. A table there is
+inheritance — instances fall back to a base — but a **function** is a
+computed-lookup metamethod that makes the table a proxy over values generated on
+demand. A proxy has no fields to declare and is not a class:
+
+```lua
+---@type string[]
+local generated = {}
+
+setmetatable(generated, {
+    __index = function(_, key) return tostring(key) end,
+})
+```
+
+An existing `---@type` also satisfies `missing-class` outright: the rule exists
+to force the literal-or-class question, and you have answered it. What you wrote
+is still checked for vagueness, so `---@type table` does not get through.
 
 Methods are exempt from `---@field`: a `function T:foo()` with its own
 `---@param`/`---@return` already describes itself, and a duplicate `---@field`
@@ -119,6 +189,32 @@ turn on the opt-in code:
 
 ```lua
 severity = { ["missing-param-placeholder"] = "error" }
+```
+
+### The module preamble
+
+`local M = {}` with nothing but `function M.f() end` below it is a **namespace**,
+and the literal-or-class question has no consumer for it: there is no data whose
+shape a reader needs, and every member is a function that annotates itself. What
+an annotation adds is a *nameable* type, which is worth something only if someone
+writes the name — and mostly nobody does. In typer's own source, 19 of 26 module
+class names appear in no type position anywhere.
+
+So it reports as `namespace-decl`, separately from `table-decl`, and ships
+**off**. Tables that really are opaque still report:
+
+```lua
+local M = {}                 -- namespace-decl (off): every member is a function
+function M.run() end
+
+local state = {}             -- table-decl (error): holds data of unknown shape
+state.count = 0
+```
+
+Want your modules named anyway? One line — typer's own `.typer.lua` has it:
+
+```lua
+severity = { ["namespace-decl"] = "error" }
 ```
 
 ## Cross-file types
@@ -209,6 +305,11 @@ The only suppression is per-site and visible in the source:
 Plain comments, not doc comments — a `---@typer-ignore` tag would show up as an
 unknown tag to lua-language-server itself.
 
+`overrides` and `fail_on` below are **not** baselines. They name paths and
+severities, never individual defects, so nothing goes stale and nothing is
+hidden: every diagnostic is still printed, every run, in full. They separate
+*what is reported* from *what fails the build* — a baseline stops reporting.
+
 ## Configuration
 
 `.typer.lua` (or `.typer.json`), searched upward from the working directory:
@@ -226,6 +327,15 @@ return {
   exclude  = { "**/spec/**", "**/*_spec.lua" },
   severity = { ["optional-param"] = "hint" },
 
+  -- Hold library code to a higher standard than tests. Later blocks win, so a
+  -- narrower one carves an exception out of a broader one above it.
+  overrides = {
+    { paths = { "spec/**" }, severity = { ["*"] = "hint" } },
+    { paths = { "spec/critical_spec.lua" }, severity = { ["missing-param"] = "error" } },
+  },
+
+  fail_on = "error",               -- report everything; fail CI only on errors
+
   require_scalar_types  = false,
   strict_globals        = true,
   require_method_fields = false,
@@ -241,6 +351,8 @@ typer [options] <path>...
   --json                      JSON output instead of vimgrep
   --config <file>             default: .typer.lua / .typer.json, searched upward
   --severity <code>=<level>   error | warning | hint | off
+  --fail-on <level>           exit 1 only at or above this severity
+                              (error | warning | hint; default hint, i.e. anything)
   --no-suppress               ignore `-- typer: ignore` comments
   --stdin-filename <path>     read source from stdin, report as <path>
 
@@ -254,7 +366,8 @@ typer [options] <path>...
 typer daemon start|stop|status|check
 ```
 
-Exit codes: `0` clean, `1` diagnostics reported, `2` tool error.
+Exit codes: `0` clean, `1` diagnostics at or above `--fail-on`, `2` tool error.
+`--fail-on` never suppresses output — everything found is always printed.
 
 Output matches vim's default errorformat (`%f:%l:%c:%m`), so `:cexpr`,
 nvim-lint and null-ls consume it with no custom parser.
